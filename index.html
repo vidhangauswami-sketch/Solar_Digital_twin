@@ -244,6 +244,37 @@
       </div>
       <button class="primary" style="width:100%;margin-top:12px" id="btnTrain" onclick="trainModel()">▶ Train model</button>
       <div id="trainMsg" class="small" style="margin-top:8px"></div>
+      <hr>
+      <div style="border:1px solid var(--line);border-radius:8px;padding:11px;margin-top:4px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="nnEnable"
+            onchange="document.getElementById('nnControls').style.display=this.checked?'block':'none'">
+          <b style="color:var(--teal)">🧠 Enable Deep Neural Network (TensorFlow.js)</b>
+        </label>
+        <div class="hint">Multi-layer network, GPU-accelerated in your browser (WebGL). Loads TensorFlow.js from CDN on first use — needs internet. Existing Ridge / 1-layer options above stay unchanged.</div>
+        <div id="nnControls" style="display:none;margin-top:10px">
+          <div class="row">
+            <div style="flex:1"><label class="fld">Hidden layers (units, comma-sep)</label>
+              <input type="text" id="nnLayers" value="16,8"></div>
+            <div style="flex:1"><label class="fld">Activation</label>
+              <select id="nnAct"><option>relu</option><option>tanh</option><option>sigmoid</option></select></div>
+          </div>
+          <div class="row">
+            <div style="flex:1"><label class="fld">Optimizer</label>
+              <select id="nnOpt"><option>adam</option><option>sgd</option></select></div>
+            <div style="flex:1"><label class="fld">Learning rate</label>
+              <input type="number" id="nnLr" value="0.01" step="0.001"></div>
+          </div>
+          <div class="row">
+            <div style="flex:1"><label class="fld">Epochs</label>
+              <input type="number" id="nnEpochs" value="150" min="10" max="2000"></div>
+            <div style="flex:1"><label class="fld">Batch size</label>
+              <input type="number" id="nnBatch" value="32" min="1" max="1024"></div>
+          </div>
+          <button class="primary" style="width:100%;margin-top:10px" id="btnTrainNN" onclick="trainNN()">▶ Train Neural Network</button>
+          <div id="nnMsg" class="small" style="margin-top:8px"></div>
+        </div>
+      </div>
     </div>
     <div class="card">
       <h3>Loss curve (MSE, standardized)</h3>
@@ -648,8 +679,10 @@ function renderPreview(n){
 
 /* ---- model setup: choose inputs & output in the Data tab (remembered) ---- */
 function numericCols(n){
+  // Scan the WHOLE column (not just the first rows) so a column whose numbers
+  // start later in the file is never wrongly dropped — all data is considered.
   return n.data.headers.filter((h,j)=>{
-    let ok=0;n.data.rows.slice(0,50).forEach(r=>{if(String(r[j]).trim()!==''&&isFinite(Number(r[j])))ok++;});
+    let ok=0;n.data.rows.forEach(r=>{if(String(r[j]).trim()!==''&&isFinite(Number(r[j])))ok++;});
     return ok>2;
   });
 }
@@ -821,8 +854,99 @@ function regMetrics(y,p){
   for(let i=0;i<n;i++){ssr+=(y[i]-p[i])**2;sst+=(y[i]-mean)**2;mae+=Math.abs(y[i]-p[i]);}
   return {r2:sst>0?1-ssr/sst:0, rmse:Math.sqrt(ssr/n), mae:mae/n};
 }
+/* ---------- TensorFlow.js deep NN (additive; loads on demand) ---------- */
+let _tfLoading=null;
+function ensureTF(){
+  if(window.tf) return Promise.resolve();
+  if(_tfLoading) return _tfLoading;
+  _tfLoading=new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src='https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4/dist/tf.min.js';
+    s.onload=()=>res();
+    s.onerror=()=>rej(new Error('Could not load TensorFlow.js — check your internet connection.'));
+    document.head.appendChild(s);
+  });
+  return _tfLoading;
+}
+async function trainNN(){
+  const n=find($('trainComp').value);
+  if(!n||!n.data){alert('Attach data to this component first (tab 3).');return;}
+  const target=$('targetCol').value;
+  const feats=[...document.querySelectorAll('.featchk:checked')].map(c=>c.value);
+  if(!feats.length){alert('Select at least one feature.');return;}
+  if(feats.includes(target)){alert('Target cannot also be a feature.');return;}
+  n.selTarget=target; n.selFeats=feats;
+
+  const {X,Y,dropped}=buildMatrix(n,feats,target);   // uses ALL rows
+  if(X.length<10){alert('Not enough clean numeric rows to train ('+X.length+'). Need ≥ 10.');return;}
+
+  $('nnMsg').innerHTML='<span class="muted">loading TensorFlow.js…</span>';
+  try{ await ensureTF(); }catch(e){ $('nnMsg').innerHTML='<span class="bad">✕ '+esc(e.message)+'</span>'; return; }
+
+  // shuffled train/val split (seeded, reproducible)
+  const rng=mulberry32(12345);
+  const idx=[...Array(X.length).keys()];
+  for(let i=idx.length-1;i>0;i--){const j=Math.floor(rng()*(i+1));[idx[i],idx[j]]=[idx[j],idx[i]];}
+  const valN=Math.max(1,Math.floor(X.length*(parseFloat($('valSplit').value)||0.2)));
+  const vSet=new Set(idx.slice(0,valN));
+  const Xtr=[],Ytr=[],Xva=[],Yva=[];
+  idx.forEach(i=>{ if(vSet.has(i)){Xva.push(X[i]);Yva.push(Y[i]);} else {Xtr.push(X[i]);Ytr.push(Y[i]);} });
+
+  const sx=standardize(Xtr), sy=stdVec(Ytr);
+  const Ztr=sx.Z, Ytrn=sy.Zy;
+  const Zva=Xva.map(r=>r.map((v,j)=>(v-sx.mean[j])/sx.std[j]));
+  const Yvan=Yva.map(v=>(v-sy.mean)/sy.std);
+
+  const nf=feats.length;
+  let layers=($('nnLayers').value||'16,8').split(',').map(s=>parseInt(s.trim())).filter(v=>v>0);
+  if(!layers.length)layers=[8];
+  const act=$('nnAct').value, optName=$('nnOpt').value, lr=parseFloat($('nnLr').value)||0.01;
+  const epochs=parseInt($('nnEpochs').value)||150, batch=Math.max(1,parseInt($('nnBatch').value)||32);
+
+  if(n.model&&n.model.model&&n.model.model.tfModel){ try{n.model.model.tfModel.dispose();}catch(e){} }
+
+  const model=tf.sequential();
+  model.add(tf.layers.dense({units:layers[0],activation:act,inputShape:[nf]}));
+  for(let k=1;k<layers.length;k++) model.add(tf.layers.dense({units:layers[k],activation:act}));
+  model.add(tf.layers.dense({units:1}));                       // linear output for regression
+  model.compile({optimizer: optName==='sgd'?tf.train.sgd(lr):tf.train.adam(lr), loss:'meanSquaredError'});
+
+  const xtr=tf.tensor2d(Ztr), ytr=tf.tensor2d(Ytrn.map(v=>[v]));
+  const xva=tf.tensor2d(Zva), yva=tf.tensor2d(Yvan.map(v=>[v]));
+  const hist={train:[],val:[]};
+  await model.fit(xtr,ytr,{epochs,batchSize:batch,validationData:[xva,yva],shuffle:true,verbose:0,
+    callbacks:{onEpochEnd:(ep,logs)=>{
+      hist.train.push(logs.loss); hist.val.push(logs.val_loss!=null?logs.val_loss:null);
+      if(ep%2===0||ep===epochs-1){
+        $('nnMsg').innerHTML='<span class="muted">training… epoch '+(ep+1)+'/'+epochs+' · loss '+logs.loss.toFixed(4)+'</span>';
+        drawLoss(hist);
+      }
+    }}});
+
+  const pT=model.predict(xva); const pStd=Array.from(pT.dataSync()); pT.dispose();
+  const predVa=pStd.map(v=>v*sy.std+sy.mean);
+  const met=regMetrics(Yva,predVa);
+  xtr.dispose();ytr.dispose();xva.dispose();yva.dispose();
+
+  const ranges=feats.map((f,j)=>{const col=X.map(r=>r[j]);return {min:Math.min(...col),max:Math.max(...col)};});
+
+  n.model={ type:'nn', feats, target, sx, sy,
+    model:{ kind:'tfnn', tfModel:model, arch:layers, activation:act },
+    ranges, metrics:met, hist, dropped, nTrain:Xtr.length, nVal:Xva.length };
+
+  $('nnMsg').innerHTML=`<span class="ok">✓ NN [${layers.join('-')}] trained on ${Xtr.length} rows, validated on ${Xva.length}.</span>`+
+    (dropped?` <span class="warn">${dropped} row(s) dropped (non-numeric/blank).</span>`:'');
+  drawLoss(hist); showMetrics(n.model);
+  renderDiagram(); renderNodeList(); refreshSelectors();
+}
+
 function predictOne(m,xraw){
   const z=xraw.map((v,j)=>(v-m.sx.mean[j])/m.sx.std[j]);
+  if(m.model.kind==='tfnn'){
+    const out=m.model.tfModel.predict(tf.tensor2d([z]));
+    const v=out.dataSync()[0]; out.dispose();
+    return v*m.sy.std+m.sy.mean;
+  }
   let out;
   if(m.model.kind==='linear'){out=m.model.b;for(let j=0;j<z.length;j++)out+=z[j]*m.model.w[j];}
   else {const M=m.model;let o=M.b2;for(let h=0;h<M.H;h++){let s=M.b1[h];
@@ -858,7 +982,7 @@ function showMetrics(m){
     <div class="metric"><span>MAE (orig units)</span><b>${fmt(m.metrics.mae)}</b></div>
     <div class="metric"><span>Final train loss</span><b>${m.hist.train.at(-1).toExponential(2)}</b></div>
     <div class="metric"><span>Final val loss</span><b>${(m.hist.val.at(-1)??0).toExponential(2)}</b></div>
-    <div class="small muted" style="margin-top:8px">Model: ${m.type==='mlp'?'1-hidden-layer net':'ridge/linear'} · ${m.feats.length} feature(s) → ${esc(m.target)}.
+    <div class="small muted" style="margin-top:8px">Model: ${m.type==='nn'?('deep NN ['+((m.model&&m.model.arch)||[]).join('-')+'] '+((m.model&&m.model.activation)||'')):m.type==='mlp'?'1-hidden-layer net':'ridge/linear'} · ${m.feats.length} feature(s) → ${esc(m.target)}.
     ${r2<0.3?'<br><span class="warn">Low R² — features may not explain the target, or the relationship is more complex than this model captures.</span>':''}</div>`;
 }
 
@@ -1021,7 +1145,8 @@ function syncTrainCols(){
   }));
 }
 function saveConfig(){
-  const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
+  // Drop live TensorFlow.js models — they can't be JSON-serialized (retrain after load).
+  const blob=new Blob([JSON.stringify(state,(k,v)=>k==='tfModel'?undefined:v,2)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
   a.download='plant_twin_config.json';a.click();
 }
@@ -1031,6 +1156,8 @@ function loadConfig(input){
     state=Object.assign({nodes:[],wires:[],sel:null,connectFrom:null,connectMode:false},s);
     state.connectMode=false;state.connectFrom=null;
     let mx=1;state.nodes.forEach(n=>{const num=+String(n.id).replace(/\D/g,'');if(num>=mx)mx=num+1;});uid=mx;
+    // A saved NN has no restorable weights — clear it so it isn't shown as usable.
+    state.nodes.forEach(n=>{ if(n.model&&n.model.model&&n.model.model.kind==='tfnn'){ n.model=null; n.lastPred=null; } });
     renderDiagram();refreshSelectors();renderNodeList();
     alert('Config loaded: '+state.nodes.length+' components.');
   }catch(e){alert('Invalid config file: '+e.message);}};
