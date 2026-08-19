@@ -108,7 +108,44 @@
   .sec{margin-top:16px}
   .sec>h3{font-size:12.5px;text-transform:uppercase;letter-spacing:.7px;color:var(--amber2);
     border-left:3px solid var(--amber);padding-left:8px;margin:0 0 10px}
+  /* ---- Cleaning Analysis module ---- */
+  .ctabs{display:flex;gap:2px;background:var(--panel);border:1px solid var(--line);
+    border-radius:8px 8px 0 0;overflow-x:auto}
+  .ctab{padding:9px 14px;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;
+    font-size:12.5px;white-space:nowrap}
+  .ctab:hover{color:var(--ink)}
+  .ctab.active{color:var(--amber);border-bottom-color:var(--amber)}
+  .cview{display:none;border:1px solid var(--line);border-top:none;border-radius:0 0 8px 8px;padding:14px}
+  .cview.active{display:block}
+  .plotbox{width:100%;height:360px}
+  .plotbox.sm{height:230px}
+  .plotbox.lg{height:440px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media(max-width:900px){.two{grid-template-columns:1fr}}
+  .dz{border:1px dashed var(--line);border-radius:6px;padding:5px 8px}
+  .badge-status{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;
+    font-weight:600;margin:2px}
+  .badge-status.optimal{background:#16261c;color:var(--green);border:1px solid #2a4a2a}
+  .badge-status.suboptimal{background:rgba(255,154,46,.12);color:var(--amber2);
+    border:1px solid rgba(255,154,46,.4)}
+  .badge-status.wrong{background:rgba(255,92,92,.12);color:var(--red);
+    border:1px solid rgba(255,92,92,.4)}
+  .badge-status.unknown{background:var(--panel2);color:var(--muted);border:1px solid var(--line)}
+  .invbtn{padding:5px 11px;font-size:12px;border:1px solid var(--line);border-radius:5px;
+    background:var(--panel2);color:var(--ink);cursor:pointer;margin:2px}
+  .invbtn.on{border-color:var(--amber);color:var(--amber2);font-weight:600}
+  .chatbox{background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+    min-height:260px;max-height:400px;overflow-y:auto;padding:12px;margin-bottom:8px}
+  .cmsg{display:flex;gap:8px;margin-bottom:10px}
+  .cmsg .role{font-size:9px;letter-spacing:1px;margin-bottom:2px;color:var(--muted)}
+  .cmsg.u .role{color:var(--blue)} .cmsg.a .role{color:var(--teal)}
+  .cmsg .txt{font-size:12px;line-height:1.6;white-space:pre-wrap}
+  .qp{padding:4px 9px;font-size:10.5px;border:1px solid var(--line);border-radius:14px;
+    background:transparent;color:var(--muted);cursor:pointer;margin:2px}
+  .qp:hover{border-color:var(--amber);color:var(--amber2)}
 </style>
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 </head>
 <body>
 <header>
@@ -130,6 +167,7 @@
   <div class="tab" data-v="train">4 · Train Model</div>
   <div class="tab" data-v="predict">5 · Predict</div>
   <div class="tab" data-v="bess">6 · BESS / UPS Monitor</div>
+  <div class="tab" data-v="clean">7 · Cleaning Analysis</div>
 </div>
 
 <!-- ============ VIEW 1: BUILD ============ -->
@@ -350,6 +388,158 @@
   </div>
 
   <div id="bessOut" style="margin-top:16px"></div>
+</div>
+
+<!-- ============ VIEW 7: CLEANING ANALYSIS ============ -->
+<div class="view" id="v-clean">
+  <div class="caveat">
+    Upload your own <b>cleaning log</b> and <b>date-wise per-inverter generation</b> and get the same
+    before/after, soiling-loss, cleaning-log and EDA analysis as the reference dashboard — computed
+    entirely in your browser from those two files. This build has no weather/GTI/PVsyst feed, so the
+    "weather-adjusted" gain is approximated by normalizing each inverter against the <b>fleet's daily
+    mean</b> that day (a standard soiling-analysis trick: irradiance and temperature swings hit every
+    inverter on the same site about equally, so dividing them out isolates the cleaning/soiling effect).
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>1 · Upload data</h3>
+
+      <label class="fld">Generation data CSV</label>
+      <div class="row dz">
+        <input type="file" id="clGenFile" accept=".csv" onchange="CL.loadGenFile(this)">
+      </div>
+      <div class="hint">Wide format: <code>Date, Inv_1, Inv_2, …</code> (kWh per inverter per day) —
+        or long format: <code>Date, Inverter, Generation</code>. Header names are matched loosely
+        (anything with "date", "inverter/asset", "gen/kwh/energy/output").</div>
+      <div id="clGenMsg" class="small muted" style="margin-top:6px">No file loaded yet.</div>
+
+      <hr>
+      <label class="fld">Cleaning log CSV</label>
+      <div class="row dz">
+        <input type="file" id="clCleanFile" accept=".csv" onchange="CL.loadCleanFile(this)">
+      </div>
+      <div class="hint"><code>Date, Inverter[, Type]</code> — leave Inverter blank or use
+        <code>ALL</code> for rows where the whole plant was cleaned the same day.</div>
+      <div id="clCleanMsg" class="small muted" style="margin-top:6px">No file loaded yet.</div>
+
+      <hr>
+      <div class="row">
+        <label class="fld" style="margin:0">Before/after window (days)</label>
+        <input type="number" id="clWindow" value="10" min="3" max="30" style="max-width:80px">
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="primary" id="clRunBtn" onclick="CL.analyze()" disabled>▶ Run analysis</button>
+        <button onclick="CL.loadSample()">Use sample data instead</button>
+      </div>
+      <div id="clRunMsg" class="small" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card">
+      <h3>How the metrics are computed</h3>
+      <div class="small muted" style="line-height:1.7">
+        <b class="mono" style="color:var(--teal)">% Actual</b> — plain before/after average change in kWh, no adjustment.<br><br>
+        <b class="mono" style="color:var(--teal)">% Normalized</b> — before/after change in each inverter's
+        output <i>relative to the fleet's mean that day</i>. This is the closest proxy available to a true
+        weather-adjusted cleaning effect without irradiance data.<br><br>
+        <b class="mono" style="color:var(--teal)">Soiling %</b> — how far the inverter's relative output had
+        drifted below its own trailing 45-day peak, right before the clean.<br><br>
+        <b class="mono" style="color:var(--teal)">Status</b> — <span style="color:var(--red)">Wrong-timing</span>
+        if the normalized gain was negative, <span style="color:var(--amber2)">Sub-optimal</span> if it was a
+        small positive gain (&lt;2%), otherwise <span style="color:var(--green)">Optimal</span>.
+      </div>
+    </div>
+  </div>
+
+  <div id="clResults" style="display:none;margin-top:16px">
+    <div class="ctabs" id="clSubtabs">
+      <div class="ctab active" data-cv="overview" onclick="CL.goSub('overview')">Overview</div>
+      <div class="ctab" data-cv="ba" onclick="CL.goSub('ba')">Before / After</div>
+      <div class="ctab" data-cv="soil" onclick="CL.goSub('soil')">Soiling Loss</div>
+      <div class="ctab" data-cv="ts" onclick="CL.goSub('ts')">Time Series</div>
+      <div class="ctab" data-cv="log" onclick="CL.goSub('log')">Cleaning Log</div>
+      <div class="ctab" data-cv="eda" onclick="CL.goSub('eda')">EDA Stats</div>
+      <div class="ctab" data-cv="ai" onclick="CL.goSub('ai')">AI Analyst</div>
+    </div>
+
+    <!-- OVERVIEW -->
+    <div class="cview active" id="cv-overview">
+      <h4 style="margin:0 0 8px;color:var(--muted);font-size:12px;text-transform:uppercase">
+        Avg generation before vs after cleaning (all events, per inverter)</h4>
+      <div class="chartbox"><div class="plotbox" id="cl-ov-bar"></div></div>
+      <div class="two" style="margin-top:12px">
+        <div class="chartbox"><h4>Avg actual % gain</h4><div class="plotbox sm" id="cl-ov-act"></div></div>
+        <div class="chartbox"><h4>Avg normalized % gain (true cleaning effect)</h4><div class="plotbox sm" id="cl-ov-nor"></div></div>
+      </div>
+      <h4 style="margin:14px 0 8px;color:var(--muted);font-size:12px;text-transform:uppercase">All cleaning events</h4>
+      <div class="scroll"><table id="cl-tb-ov"></table></div>
+    </div>
+
+    <!-- BEFORE / AFTER -->
+    <div class="cview" id="cv-ba">
+      <div class="row"><span class="small muted">Inverter:</span><div id="cl-ba-invs"></div></div>
+      <div class="row" style="margin-top:6px">
+        <span class="small muted">Event:</span>
+        <select id="cl-ba-ev" onchange="CL.renderBA()" style="max-width:340px"></select>
+      </div>
+      <div class="kpis" id="cl-ba-cards" style="margin-top:10px"></div>
+      <h4 style="margin:14px 0 8px;color:var(--muted);font-size:12px;text-transform:uppercase">Window: actual kWh vs fleet mean</h4>
+      <div class="chartbox"><div class="plotbox lg" id="cl-ba-main"></div></div>
+      <h4 style="margin:14px 0 8px;color:var(--muted);font-size:12px;text-transform:uppercase">All events for this inverter — normalized % gain</h4>
+      <div class="chartbox"><div class="plotbox" id="cl-ba-all"></div></div>
+    </div>
+
+    <!-- SOILING LOSS -->
+    <div class="cview" id="cv-soil">
+      <div class="row"><span class="small muted">Inverter:</span>
+        <select id="cl-sl-inv" onchange="CL.renderSoil()" style="max-width:220px"></select>
+      </div>
+      <h4 style="margin:14px 0 8px;color:var(--muted);font-size:12px;text-transform:uppercase">Daily soiling loss % (vs trailing 45-day peak)</h4>
+      <div class="chartbox"><div class="plotbox lg" id="cl-sl-daily"></div></div>
+      <h4 style="margin:14px 0 8px;color:var(--muted);font-size:12px;text-transform:uppercase">Soiling rate right before each cleaning event</h4>
+      <div class="chartbox"><div class="plotbox" id="cl-sl-events"></div></div>
+    </div>
+
+    <!-- TIME SERIES -->
+    <div class="cview" id="cv-ts">
+      <div class="row"><span class="small muted">Inverter:</span>
+        <select id="cl-ts-inv" onchange="CL.renderTS()" style="max-width:220px"></select>
+        <span class="small muted">★ = cleaning day</span>
+      </div>
+      <div class="chartbox" style="margin-top:8px"><div class="plotbox lg" id="cl-ts"></div></div>
+      <h4 style="margin:14px 0 8px;color:var(--muted);font-size:12px;text-transform:uppercase">Fleet comparison — all inverters</h4>
+      <div class="chartbox"><div class="plotbox lg" id="cl-ts-fleet"></div></div>
+    </div>
+
+    <!-- CLEANING LOG -->
+    <div class="cview" id="cv-log">
+      <div class="scroll"><table id="cl-tb-log"></table></div>
+    </div>
+
+    <!-- EDA -->
+    <div class="cview" id="cv-eda">
+      <div class="scroll"><table id="cl-tb-eda"></table></div>
+      <div class="two" style="margin-top:12px">
+        <div class="chartbox"><h4>Mean daily generation per inverter</h4><div class="plotbox sm" id="cl-eda-mean"></div></div>
+        <div class="chartbox"><h4>Correlation vs fleet mean (Pearson r)</h4><div class="plotbox sm" id="cl-eda-corr"></div></div>
+      </div>
+    </div>
+
+    <!-- AI ANALYST -->
+    <div class="cview" id="cv-ai">
+      <p class="small muted" style="margin-bottom:8px">Ask about the cleaning events, soiling rates and
+        flags computed from your uploaded data.</p>
+      <div class="row" id="cl-qpills"></div>
+      <div class="chatbox" id="cl-chatbox"><div class="small muted" style="text-align:center;margin-top:40px">
+        Ask a question about your cleaning data…</div></div>
+      <div class="row" style="margin:0">
+        <input type="text" id="cl-cinput" placeholder="e.g. Which events had a negative normalized gain?"
+          style="flex:1" onkeydown="if(event.key==='Enter')CL.doChat()">
+        <button class="primary" id="cl-cbtn" onclick="CL.doChat()">Ask</button>
+        <button onclick="CL.clrChat()">Clear</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -1903,5 +2093,560 @@ L(0,1); L(1,2); L(2,3); L(3,4); L(4,5); L(2,6);
 L(8,7); L(7,2); L(6,9);   // BESS → PCS → LT bus ;  Aux Tx → UPS
 renderDiagram();refreshSelectors();renderNodeList();
 </script>
+<script>
+"use strict";
+/* =========================================================================
+   CLEANING ANALYSIS MODULE (namespaced as CL — self-contained, only reads
+   the global $ helper already defined by the main app)
+   ========================================================================= */
+const CL = (function(){
+
+  const PALETTE = ['#ff9a2e','#2dd4bf','#5aa9ff','#4ade80','#ff5c5c','#c084fc','#f472b6','#facc15'];
+  let raw = { gen:null, clean:null };   // parsed-but-not-yet-combined uploads
+  let D   = null;                       // computed analysis bundle, once "Run analysis" is clicked
+
+  /* ---------------- date helpers ---------------- */
+  function isoDate(v){
+    if(v==null || v==='') return null;
+    if(v instanceof Date) return isNaN(v) ? null : v.toISOString().slice(0,10);
+    const s = String(v).trim();
+    let d = new Date(s);
+    if(!isNaN(d)) return d.toISOString().slice(0,10);
+    // try dd-mm-yyyy / dd/mm/yyyy fallback
+    const m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+    if(m){
+      let [_,a,b,y] = m;
+      if(y.length===2) y = '20'+y;
+      d = new Date(`${y}-${b.padStart(2,'0')}-${a.padStart(2,'0')}`);
+      if(!isNaN(d)) return d.toISOString().slice(0,10);
+    }
+    return null;
+  }
+
+  /* ---------------- CSV parsing ---------------- */
+  function parseCSVFile(file, cb, errCb){
+    if(!file){ return; }
+    Papa.parse(file, {
+      header:true, dynamicTyping:true, skipEmptyLines:true,
+      complete: res => {
+        if(!res.data || !res.data.length){ errCb('File appears to be empty.'); return; }
+        cb(res.data, res.meta.fields||Object.keys(res.data[0]));
+      },
+      error: e => errCb(e.message)
+    });
+  }
+
+  function parseGen(rows, fields){
+    const lower = fields.map(f=>String(f).toLowerCase().trim());
+    const dateIdx = lower.findIndex(f=>f.includes('date'));
+    if(dateIdx<0) throw new Error('No column with "date" in its header was found.');
+    const dateField = fields[dateIdx];
+    const invIdx = lower.findIndex(f=>/inverter|asset|unit|device|component|string|block/.test(f));
+    const valIdx = lower.findIndex(f=>/gen|kwh|energy|output|value|production|yield/.test(f));
+
+    const byInv = {}; const dateSet = new Set();
+    if(invIdx>=0 && valIdx>=0 && fields.length<=4 && invIdx!==dateIdx && valIdx!==dateIdx){
+      // long format: Date, Inverter, Generation
+      const invField = fields[invIdx], valField = fields[valIdx];
+      rows.forEach(r=>{
+        const d = isoDate(r[dateField]); if(!d) return;
+        const inv = String(r[invField]||'').trim(); if(!inv) return;
+        const v = Number(r[valField]); if(!isFinite(v)) return;
+        dateSet.add(d);
+        (byInv[inv] = byInv[inv]||{})[d]=v;
+      });
+    } else {
+      // wide format: Date, Inv_1, Inv_2, ...
+      const invFields = fields.filter(f=>f!==dateField);
+      if(!invFields.length) throw new Error('No inverter columns found alongside the date column.');
+      rows.forEach(r=>{
+        const d = isoDate(r[dateField]); if(!d) return;
+        dateSet.add(d);
+        invFields.forEach(fN=>{
+          const v = Number(r[fN]);
+          if(!isFinite(v)) return;
+          (byInv[fN] = byInv[fN]||{})[d]=v;
+        });
+      });
+    }
+    const invs = Object.keys(byInv);
+    if(!invs.length) throw new Error('Could not find any usable numeric generation columns.');
+    const dates = Array.from(dateSet).sort();
+    const series = {};
+    invs.forEach(inv=> series[inv] = dates.map(d => (byInv[inv][d]!==undefined ? byInv[inv][d] : null)));
+    return { dates, invs, series };
+  }
+
+  function parseClean(rows, fields, allInvs){
+    const lower = fields.map(f=>String(f).toLowerCase().trim());
+    const dateIdx = lower.findIndex(f=>f.includes('date'));
+    if(dateIdx<0) throw new Error('No column with "date" in its header was found.');
+    const dateField = fields[dateIdx];
+    const invIdx = lower.findIndex(f=>/inverter|asset|unit|device|component/.test(f));
+    const typeIdx = lower.findIndex(f=>/type|method/.test(f));
+    const invField = invIdx>=0 ? fields[invIdx] : null;
+    const typeField = typeIdx>=0 ? fields[typeIdx] : null;
+
+    const evByInv = {}; allInvs.forEach(i=>evByInv[i]=[]);
+    let matched=0, total=0;
+    rows.forEach(r=>{
+      const d = isoDate(r[dateField]); if(!d) return;
+      total++;
+      const type = typeField ? (String(r[typeField]||'wet').trim()||'wet') : 'wet';
+      const invRaw = invField ? String(r[invField]||'').trim() : '';
+      if(!invRaw || invRaw.toUpperCase()==='ALL'){
+        allInvs.forEach(inv=>evByInv[inv].push({date:d, type})); matched++;
+      } else {
+        let match = allInvs.find(inv=>inv.toLowerCase()===invRaw.toLowerCase());
+        if(!match) match = allInvs.find(inv=> inv.toLowerCase().includes(invRaw.toLowerCase()) || invRaw.toLowerCase().includes(inv.toLowerCase()));
+        if(match){ evByInv[match].push({date:d, type}); matched++; }
+      }
+    });
+    Object.keys(evByInv).forEach(inv=>evByInv[inv].sort((a,b)=> a.date<b.date?-1:(a.date>b.date?1:0)));
+    return { evByInv, matched, total };
+  }
+
+  /* ---------------- file handlers ---------------- */
+  function loadGenFile(input){
+    const f = input.files[0]; if(!f) return;
+    parseCSVFile(f, (rows,fields)=>{
+      try{
+        raw.gen = parseGen(rows, fields);
+        $('clGenMsg').innerHTML = `<span class="ok">✓ ${raw.gen.dates.length} days · ${raw.gen.invs.length} inverter(s): ${raw.gen.invs.join(', ')}</span>`;
+      } catch(e){
+        raw.gen = null;
+        $('clGenMsg').innerHTML = `<span class="bad">✗ ${e.message}</span>`;
+      }
+      updateRunBtn();
+    }, msg=>{ $('clGenMsg').innerHTML = `<span class="bad">✗ ${msg}</span>`; });
+  }
+
+  function loadCleanFile(input){
+    const f = input.files[0]; if(!f) return;
+    if(!raw.gen){ $('clCleanMsg').innerHTML = `<span class="bad">✗ Load the generation file first so inverter names are known.</span>`; input.value=''; return; }
+    parseCSVFile(f, (rows,fields)=>{
+      try{
+        const res = parseClean(rows, fields, raw.gen.invs);
+        raw.clean = res.evByInv;
+        const n = Object.values(res.evByInv).reduce((s,a)=>s+a.length,0);
+        $('clCleanMsg').innerHTML = `<span class="ok">✓ ${n} cleaning record(s) matched (${res.matched}/${res.total} rows)</span>`;
+      } catch(e){
+        raw.clean = null;
+        $('clCleanMsg').innerHTML = `<span class="bad">✗ ${e.message}</span>`;
+      }
+      updateRunBtn();
+    }, msg=>{ $('clCleanMsg').innerHTML = `<span class="bad">✗ ${msg}</span>`; });
+  }
+
+  function updateRunBtn(){
+    $('clRunBtn').disabled = !(raw.gen && raw.clean);
+  }
+
+  /* ---------------- sample data (for trying the tool) ---------------- */
+  function loadSample(){
+    const dates=[]; const start=new Date('2026-01-01');
+    for(let i=0;i<100;i++){ const d=new Date(start); d.setDate(d.getDate()+i); dates.push(d.toISOString().slice(0,10)); }
+    const invs=['Inv_1','Inv_2','Inv_3'];
+    const series={};
+    invs.forEach((inv,ii)=>{
+      const arr=[]; let soil=0;
+      for(let i=0;i<dates.length;i++){
+        const seasonal = 1800 + 200*Math.sin(i/18) + (ii*15);
+        const noise = (Math.random()-0.5)*120;
+        soil += 0.35 + Math.random()*0.25;
+        const val = Math.max(400, seasonal - soil*6 + noise);
+        arr.push(+val.toFixed(1));
+        if((i-3-ii*7)%23===0 && i>5) soil=Math.random()*2; // periodic cleaning resets soiling
+      }
+      series[inv]=arr;
+    });
+    raw.gen = { dates, invs, series };
+    const evByInv = {}; invs.forEach((inv,ii)=>{
+      evByInv[inv]=[];
+      for(let i=8+ii*7;i<dates.length;i+=23) evByInv[inv].push({date:dates[i], type: Math.random()<0.5?'wet':'robot'});
+    });
+    raw.clean = evByInv;
+    $('clGenMsg').innerHTML = `<span class="ok">✓ Sample data loaded: ${dates.length} days · ${invs.join(', ')}</span>`;
+    $('clCleanMsg').innerHTML = `<span class="ok">✓ Sample cleaning log loaded</span>`;
+    updateRunBtn();
+    analyze();
+  }
+
+  /* ---------------- core computation ---------------- */
+  function compute(){
+    const { dates, invs, series } = raw.gen;
+    const n = dates.length;
+    const fleetMean = dates.map((_,i)=>{
+      let s=0,c=0; invs.forEach(inv=>{ const v=series[inv][i]; if(v!=null){ s+=v; c++; } });
+      return c ? s/c : null;
+    });
+    const norm = {};
+    invs.forEach(inv=> norm[inv] = series[inv].map((v,i)=> (v!=null && fleetMean[i]) ? v/fleetMean[i] : null));
+
+    const rollPeak={}, dailyLoss={};
+    invs.forEach(inv=>{
+      rollPeak[inv]=[]; dailyLoss[inv]=[];
+      for(let i=0;i<n;i++){
+        const start=Math.max(0,i-44); let mx=null;
+        for(let j=start;j<=i;j++){ const v=norm[inv][j]; if(v!=null && (mx==null||v>mx)) mx=v; }
+        rollPeak[inv][i]=mx;
+        const v=norm[inv][i];
+        dailyLoss[inv][i]=(mx!=null && v!=null) ? Math.max(0,(mx-v)/mx*100) : null;
+      }
+    });
+
+    const W = Math.max(3, Math.min(30, +($('clWindow').value)||10));
+    const dateIdx = {}; dates.forEach((d,i)=>dateIdx[d]=i);
+    const results = {}; const summary = [];
+    invs.forEach(inv=>{
+      const evs = (raw.clean[inv]||[]).filter(e=>dateIdx[e.date]!=null);
+      let prevGain=[];
+      const enriched = evs.map((e,k)=>{
+        const i = dateIdx[e.date];
+        const prevEvIdx = k>0 ? dateIdx[evs[k-1].date] : -1;
+        const nextEvIdx = k<evs.length-1 ? dateIdx[evs[k+1].date] : n;
+        const preStart = Math.max(0, i-W, prevEvIdx+1);
+        const postEnd = Math.min(n-1, i+W, nextEvIdx-1);
+        const avg = a => a.length ? a.reduce((s,v)=>s+v,0)/a.length : null;
+        const before = series[inv].slice(preStart,i).filter(v=>v!=null);
+        const after  = series[inv].slice(i,postEnd+1).filter(v=>v!=null);
+        const beforeN = norm[inv].slice(preStart,i).filter(v=>v!=null);
+        const afterN  = norm[inv].slice(i,postEnd+1).filter(v=>v!=null);
+        const avg_before=avg(before), avg_after=avg(after);
+        const avg_before_norm=avg(beforeN), avg_after_norm=avg(afterN);
+        const pct_actual = (avg_before && avg_after) ? (avg_after-avg_before)/avg_before*100 : null;
+        const pct_normal = (avg_before_norm && avg_after_norm) ? (avg_after_norm-avg_before_norm)/avg_before_norm*100 : null;
+        const soiling_rate_pct = i>0 ? dailyLoss[inv][i-1] : null;
+        const gapStart = k>0 ? dateIdx[evs[k-1].date] : 0;
+        let lost=0;
+        for(let j=gapStart;j<i;j++){
+          const pk=rollPeak[inv][j], v=norm[inv][j], fm=fleetMean[j];
+          if(pk!=null && v!=null && fm!=null){ const diff=(pk-v)/pk; if(diff>0) lost += diff*fm; }
+        }
+        const hist_avg_gain = prevGain.length ? prevGain.reduce((s,v)=>s+v,0)/prevGain.length : null;
+        let status='unknown';
+        if(pct_normal!=null) status = pct_normal<0 ? 'wrong' : (pct_normal<2 ? 'suboptimal' : 'optimal');
+        if(pct_normal!=null) prevGain.push(pct_normal);
+        const wdates = dates.slice(preStart,postEnd+1);
+        const rec = {
+          inv, date:e.date, type:e.type,
+          avg_before, avg_after, pct_actual,
+          avg_before_norm, avg_after_norm, pct_normal,
+          soiling_rate_pct, lost_gen_kwh: lost, hist_avg_gain, status,
+          window: {
+            dates: wdates,
+            delta: wdates.map((_,idx)=> preStart+idx-i),
+            actual: series[inv].slice(preStart,postEnd+1),
+            fleet: fleetMean.slice(preStart,postEnd+1),
+            norm: norm[inv].slice(preStart,postEnd+1)
+          }
+        };
+        summary.push(rec);
+        return rec;
+      });
+      results[inv]=enriched;
+    });
+
+    // EDA stats
+    const eda = {};
+    invs.forEach(inv=>{
+      const vals = series[inv].filter(v=>v!=null);
+      const m = vals.reduce((s,v)=>s+v,0)/(vals.length||1);
+      const sd = Math.sqrt(vals.reduce((s,v)=>s+(v-m)*(v-m),0)/(vals.length||1));
+      const sorted = [...vals].sort((a,b)=>a-b);
+      const median = sorted.length ? sorted[Math.floor(sorted.length/2)] : 0;
+      const q1 = sorted[Math.floor(sorted.length*0.25)]||0, q3 = sorted[Math.floor(sorted.length*0.75)]||0;
+      const iqr = q3-q1;
+      const outliers = vals.filter(v=> v<q1-1.5*iqr || v>q3+1.5*iqr).length;
+      // correlation vs fleet mean
+      let sxy=0,sx=0,sy=0,sxx=0,syy=0,cnt=0;
+      for(let i=0;i<n;i++){
+        const x=series[inv][i], y=fleetMean[i];
+        if(x!=null && y!=null){ cnt++; sx+=x; sy+=y; sxy+=x*y; sxx+=x*x; syy+=y*y; }
+      }
+      let corr=0;
+      if(cnt>1){
+        const num = cnt*sxy - sx*sy;
+        const den = Math.sqrt((cnt*sxx-sx*sx)*(cnt*syy-sy*sy));
+        corr = den ? num/den : 0;
+      }
+      eda[inv] = { mean:+m.toFixed(1), std:+sd.toFixed(1), min:+(sorted[0]||0).toFixed(1),
+        max:+(sorted[sorted.length-1]||0).toFixed(1), median:+median.toFixed(1),
+        cv_pct: m ? +(sd/m*100).toFixed(1) : 0, corr:+corr.toFixed(3), outliers };
+    });
+
+    D = { dates, invs, series, fleetMean, norm, rollPeak, dailyLoss, results, summary, eda, W };
+  }
+
+  function gc(inv){ return PALETTE[D.invs.indexOf(inv)%PALETTE.length]; }
+  function fmt(v,d=1){ return (v==null || !isFinite(v)) ? '—' : (+v).toFixed(d); }
+  function pctSpan(v){
+    if(v==null) return '—';
+    const cls = v>=0 ? 'ok' : 'bad';
+    return `<span class="${cls}">${v>=0?'+':''}${v.toFixed(1)}%</span>`;
+  }
+  function statusBadge(s){
+    const label = {wrong:'WRONG TIMING', suboptimal:'SUB-OPTIMAL', optimal:'OPTIMAL', unknown:'—'}[s]||s;
+    return `<span class="badge-status ${s}">${label}</span>`;
+  }
+  const L = extra => Object.assign({
+    paper_bgcolor:'transparent', plot_bgcolor:'transparent',
+    font:{color:'#e6edf3', size:11}, margin:{t:34,b:40,l:50,r:16},
+    legend:{orientation:'h', y:-0.18}
+  }, extra);
+  const CFG = { displayModeBar:false, responsive:true };
+
+  /* ---------------- top-level run ---------------- */
+  function analyze(){
+    $('clRunMsg').innerHTML = '';
+    try{
+      if(!raw.gen || !raw.clean) throw new Error('Load both files first.');
+      compute();
+    } catch(e){
+      $('clRunMsg').innerHTML = `<span class="bad">✗ ${e.message}</span>`;
+      return;
+    }
+    $('clResults').style.display='block';
+    renderOverview();
+    initBA();
+    initSoil();
+    initTS();
+    initLog();
+    initEDA();
+    initAI();
+    goSub('overview');
+    $('clRunMsg').innerHTML = `<span class="ok">✓ Analyzed ${D.summary.length} cleaning event(s) across ${D.invs.length} inverter(s).</span>`;
+  }
+
+  function goSub(name){
+    document.querySelectorAll('.ctab').forEach(b=>b.classList.toggle('active', b.dataset.cv===name));
+    document.querySelectorAll('.cview').forEach(v=>v.classList.toggle('active', v.id==='cv-'+name));
+  }
+
+  /* ---------------- OVERVIEW ---------------- */
+  function renderOverview(){
+    const agg = D.invs.map(inv=>{
+      const evs = D.results[inv];
+      const avg = a => a.length ? a.reduce((s,v)=>s+v,0)/a.length : 0;
+      return {
+        inv,
+        avgB: avg(evs.map(e=>e.avg_before).filter(v=>v!=null)),
+        avgA: avg(evs.map(e=>e.avg_after).filter(v=>v!=null)),
+        pA: avg(evs.map(e=>e.pct_actual).filter(v=>v!=null)),
+        pN: avg(evs.map(e=>e.pct_normal).filter(v=>v!=null)),
+      };
+    });
+    Plotly.newPlot('cl-ov-bar',[
+      {name:'Avg Before', x:agg.map(r=>r.inv), y:agg.map(r=>r.avgB), type:'bar', marker:{color:'#5aa9ff'}},
+      {name:'Avg After',  x:agg.map(r=>r.inv), y:agg.map(r=>r.avgA), type:'bar', marker:{color:'#4ade80'}},
+    ], L({title:{text:'Avg generation before/after (kWh)',font:{size:12}}, barmode:'group'}), CFG);
+
+    Plotly.newPlot('cl-ov-act',[{
+      x:agg.map(r=>r.inv), y:agg.map(r=>r.pA), type:'bar',
+      marker:{color:agg.map(r=>r.pA>=0?'#4ade80':'#ff5c5c')},
+      text:agg.map(r=>(r.pA>=0?'+':'')+r.pA.toFixed(1)+'%'), textposition:'outside',
+    }], L({yaxis:{title:'%'}, showlegend:false, margin:{t:16,b:40,l:44,r:10}}), CFG);
+
+    Plotly.newPlot('cl-ov-nor',[{
+      x:agg.map(r=>r.inv), y:agg.map(r=>r.pN), type:'bar',
+      marker:{color:agg.map(r=>r.pN>=2?'#ff9a2e':(r.pN>=0?'#4ade80':'#ff5c5c'))},
+      text:agg.map(r=>(r.pN>=0?'+':'')+r.pN.toFixed(1)+'%'), textposition:'outside',
+    }], L({yaxis:{title:'%'}, showlegend:false, margin:{t:16,b:40,l:44,r:10}}), CFG);
+
+    const rows = D.summary.map(s=>`<tr>
+      <td style="color:${gc(s.inv)};font-weight:700">${s.inv}</td>
+      <td>${s.date}</td><td>${s.type}</td>
+      <td>${fmt(s.avg_before)}</td><td>${fmt(s.avg_after)}</td>
+      <td>${pctSpan(s.pct_actual)}</td><td>${pctSpan(s.pct_normal)}</td>
+      <td>${fmt(s.soiling_rate_pct)}%</td>
+      <td>${fmt(s.lost_gen_kwh,0)}</td>
+      <td>${statusBadge(s.status)}</td>
+    </tr>`).join('');
+    $('cl-tb-ov').innerHTML = `<tr><th>Inv</th><th>Date</th><th>Type</th><th>Before</th><th>After</th>
+      <th>%Actual</th><th>%Normalized</th><th>Soiling%</th><th>Lost kWh</th><th>Status</th></tr>${rows}`;
+  }
+
+  /* ---------------- BEFORE / AFTER ---------------- */
+  let baInv=null, baEv=0;
+  function initBA(){
+    baInv = D.invs[0];
+    $('cl-ba-invs').innerHTML = D.invs.map(inv=>
+      `<button class="invbtn${inv===baInv?' on':''}" onclick="CL.selBAInv('${inv}')">${inv}</button>`).join('');
+    popBAEvs(); renderBA();
+  }
+  function selBAInv(inv){
+    baInv=inv; baEv=0;
+    document.querySelectorAll('#cl-ba-invs .invbtn').forEach(b=>b.classList.toggle('on', b.textContent===inv));
+    popBAEvs(); renderBA();
+  }
+  function popBAEvs(){
+    const evs = D.results[baInv];
+    $('cl-ba-ev').innerHTML = evs.map((e,i)=>
+      `<option value="${i}">Ev${i+1}: ${e.date} (${e.type}) ${e.pct_normal!=null?(e.pct_normal>=0?'+':'')+e.pct_normal.toFixed(1)+'%':''}</option>`).join('')
+      || '<option>No events</option>';
+    $('cl-ba-ev').value = baEv;
+  }
+  function renderBA(){
+    const evs = D.results[baInv];
+    if(!evs || !evs.length){ $('cl-ba-cards').innerHTML='<div class="small muted">No cleaning events for this inverter.</div>'; Plotly.purge('cl-ba-main'); Plotly.purge('cl-ba-all'); return; }
+    baEv = +$('cl-ba-ev').value || 0;
+    const e = evs[baEv];
+    const gain = (e.avg_before!=null && e.avg_after!=null) ? (e.avg_after-e.avg_before) : null;
+    const kpis = [
+      ['Cleaning date', e.date+' ('+e.type+')', 'var(--amber2)'],
+      ['Avg before', fmt(e.avg_before)+' kWh', 'var(--blue)'],
+      ['Avg after', fmt(e.avg_after)+' kWh', 'var(--green)'],
+      ['Actual gain', gain!=null ? (gain>=0?'+':'')+gain.toFixed(1)+' kWh' : '—', 'var(--amber2)'],
+      ['% Actual', e.pct_actual!=null?(e.pct_actual>=0?'+':'')+e.pct_actual.toFixed(1)+'%':'—', e.pct_actual>=0?'var(--green)':'var(--red)'],
+      ['% Normalized', e.pct_normal!=null?(e.pct_normal>=0?'+':'')+e.pct_normal.toFixed(1)+'%':'—', 'var(--teal)'],
+      ['Soiling before', fmt(e.soiling_rate_pct)+'%', 'var(--amber2)'],
+      ['Status', {wrong:'WRONG TIMING',suboptimal:'SUB-OPTIMAL',optimal:'OPTIMAL',unknown:'—'}[e.status], e.status==='wrong'?'var(--red)':(e.status==='suboptimal'?'var(--amber2)':'var(--green)')],
+    ];
+    $('cl-ba-cards').innerHTML = kpis.map(k=>`<div class="kpi"><div class="lbl">${k[0]}</div><div class="val" style="color:${k[2]}">${k[1]}</div></div>`).join('');
+
+    const w = e.window;
+    Plotly.newPlot('cl-ba-main',[
+      {x:w.delta, y:w.actual, name:baInv+' actual', type:'scatter', mode:'lines+markers', line:{color:gc(baInv)}},
+      {x:w.delta, y:w.fleet, name:'Fleet mean', type:'scatter', mode:'lines', line:{color:'#8a97a6', dash:'dot'}},
+    ], L({title:{text:'Day offset from cleaning (0 = clean day)',font:{size:12}},
+          xaxis:{title:'Day offset', zeroline:true},
+          yaxis:{title:'kWh'},
+          shapes:[{type:'line', x0:0,x1:0,y0:0,y1:1,yref:'paper', line:{color:'#ff9a2e', dash:'dash'}}]}), CFG);
+
+    Plotly.newPlot('cl-ba-all',[{
+      x: evs.map(ev=>ev.date), y: evs.map(ev=>ev.pct_normal),
+      type:'bar', marker:{color:evs.map(ev=> ev.pct_normal==null?'#8a97a6':(ev.pct_normal<0?'#ff5c5c':(ev.pct_normal<2?'#ff9a2e':'#4ade80')))},
+    }], L({yaxis:{title:'% normalized gain'}, showlegend:false}), CFG);
+  }
+
+  /* ---------------- SOILING LOSS ---------------- */
+  function initSoil(){
+    $('cl-sl-inv').innerHTML = D.invs.map(inv=>`<option>${inv}</option>`).join('');
+    renderSoil();
+  }
+  function renderSoil(){
+    const inv = $('cl-sl-inv').value || D.invs[0];
+    Plotly.newPlot('cl-sl-daily',[
+      {x:D.dates, y:D.dailyLoss[inv], type:'scatter', mode:'lines', fill:'tozeroy',
+       line:{color:gc(inv)}, name:'Soiling loss %'}
+    ], L({title:{text:inv+' — daily soiling loss %',font:{size:12}}, xaxis:{type:'category', tickvals:D.dates.filter((_,i)=>i%14===0), tickangle:-45}, yaxis:{title:'%'}, showlegend:false}), CFG);
+
+    const evs = D.results[inv];
+    Plotly.newPlot('cl-sl-events',[{
+      x: evs.map(e=>e.date), y: evs.map(e=>e.soiling_rate_pct),
+      type:'bar', marker:{color:gc(inv)}
+    }], L({yaxis:{title:'% loss right before clean'}, showlegend:false}), CFG);
+  }
+
+  /* ---------------- TIME SERIES ---------------- */
+  function initTS(){
+    $('cl-ts-inv').innerHTML = D.invs.map(inv=>`<option>${inv}</option>`).join('');
+    renderTS();
+    Plotly.newPlot('cl-ts-fleet', D.invs.map(inv=>({
+      x:D.dates, y:D.series[inv], type:'scatter', mode:'lines', name:inv, line:{color:gc(inv), width:1.4}
+    })), L({title:{text:'Fleet — all inverters',font:{size:12}}, xaxis:{type:'category', tickvals:D.dates.filter((_,i)=>i%14===0), tickangle:-45}, yaxis:{title:'kWh'}}), CFG);
+  }
+  function renderTS(){
+    const inv = $('cl-ts-inv').value || D.invs[0];
+    const evDates = new Set((D.results[inv]||[]).map(e=>e.date));
+    const markX=[], markY=[];
+    D.dates.forEach((d,i)=>{ if(evDates.has(d)){ markX.push(d); markY.push(D.series[inv][i]); } });
+    Plotly.newPlot('cl-ts',[
+      {x:D.dates, y:D.series[inv], type:'scatter', mode:'lines', name:inv, line:{color:gc(inv), width:1.6}},
+      {x:markX, y:markY, type:'scatter', mode:'markers', name:'Cleaning day', marker:{symbol:'star', size:12, color:'#ff9a2e'}}
+    ], L({title:{text:inv,font:{size:12}}, xaxis:{type:'category', tickvals:D.dates.filter((_,i)=>i%14===0), tickangle:-45}, yaxis:{title:'kWh'}}), CFG);
+  }
+
+  /* ---------------- CLEANING LOG ---------------- */
+  function initLog(){
+    const rows = D.invs.map(inv=>{
+      const evs = D.results[inv];
+      const badges = evs.map(e=>`<span class="badge-status ${e.status}" style="margin:2px">
+        ${e.date} (${e.type}) ${e.pct_normal!=null?(e.pct_normal>=0?'+':'')+e.pct_normal.toFixed(1)+'%':''}</span>`).join('');
+      return `<tr><td style="color:${gc(inv)};font-weight:700">${inv}</td><td>${badges||'<span class="muted">No events</span>'}</td>
+        <td style="text-align:center">${evs.length}</td>
+        <td>${evs.length? evs[evs.length-1].date : '—'}</td></tr>`;
+    }).join('');
+    $('cl-tb-log').innerHTML = `<tr><th>Inverter</th><th>All events</th><th>Count</th><th>Latest</th></tr>${rows}`;
+  }
+
+  /* ---------------- EDA ---------------- */
+  function initEDA(){
+    const rows = D.invs.map(inv=>{
+      const e = D.eda[inv];
+      return `<tr><td style="color:${gc(inv)};font-weight:700">${inv}</td>
+        <td>${e.mean}</td><td>${e.std}</td><td>${e.min}</td><td>${e.max}</td><td>${e.median}</td>
+        <td>${e.cv_pct}%</td><td style="color:${e.corr>0.7?'#4ade80':'#facc15'}">${e.corr}</td><td>${e.outliers}</td></tr>`;
+    }).join('');
+    $('cl-tb-eda').innerHTML = `<tr><th>Inv</th><th>Mean kWh</th><th>Std Dev</th><th>Min</th><th>Max</th>
+      <th>Median</th><th>CV%</th><th>Corr vs Fleet</th><th>Outliers</th></tr>${rows}`;
+
+    Plotly.newPlot('cl-eda-mean',[{
+      x:D.invs, y:D.invs.map(inv=>D.eda[inv].mean), type:'bar', marker:{color:D.invs.map(gc)}
+    }], L({showlegend:false, margin:{t:16,b:40,l:44,r:10}}), CFG);
+    Plotly.newPlot('cl-eda-corr',[{
+      x:D.invs, y:D.invs.map(inv=>D.eda[inv].corr), type:'bar',
+      marker:{color:D.invs.map(inv=>D.eda[inv].corr>0.7?'#4ade80':'#facc15')}
+    }], L({yaxis:{range:[0,1]}, showlegend:false, margin:{t:16,b:40,l:44,r:10}}), CFG);
+  }
+
+  /* ---------------- AI ANALYST ---------------- */
+  function buildKG(){
+    const lines = [`Fleet: ${D.invs.join(', ')}. Data range: ${D.dates[0]} to ${D.dates[D.dates.length-1]}.`];
+    D.summary.forEach(s=>{
+      lines.push(`${s.inv} | ${s.date} (${s.type}) | before=${fmt(s.avg_before)}kWh after=${fmt(s.avg_after)}kWh `+
+        `%actual=${s.pct_actual!=null?s.pct_actual.toFixed(1):'NA'} %normalized=${s.pct_normal!=null?s.pct_normal.toFixed(1):'NA'} `+
+        `soiling_before=${fmt(s.soiling_rate_pct)}% lost_kwh=${fmt(s.lost_gen_kwh,0)} status=${s.status}`);
+    });
+    D.invs.forEach(inv=>{
+      const e=D.eda[inv];
+      lines.push(`${inv} stats: mean=${e.mean} std=${e.std} min=${e.min} max=${e.max} cv=${e.cv_pct}% corr_vs_fleet=${e.corr} outliers=${e.outliers}`);
+    });
+    return lines.join('\n');
+  }
+  const QSUGG = [
+    "Which events had a negative normalized gain?",
+    "Which inverter has the highest average soiling rate?",
+    "How much total generation was lost due to soiling before cleaning?",
+    "Which inverter's cleaning schedule is most sub-optimal?",
+  ];
+  function initAI(){
+    $('cl-qpills').innerHTML = QSUGG.map(q=>`<button class="qp" onclick="CL.setQ(this)">${q}</button>`).join('');
+  }
+  function setQ(el){ $('cl-cinput').value = el.textContent; }
+  async function doChat(){
+    const inp = $('cl-cinput'); const q = inp.value.trim(); if(!q) return;
+    inp.value=''; addMsg('u', q);
+    const btn = $('cl-cbtn'); btn.textContent='…'; btn.disabled=true;
+    try{
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          model:'claude-sonnet-4-20250514', max_tokens:1000,
+          messages:[{role:'user', content:
+            `You are a solar O&M analyst. Use ONLY the data below (computed client-side from the user's uploaded CSVs). Be precise, cite numbers, and note that "%normalized" is a fleet-relative proxy, not a true weather-adjusted PVsyst figure.\n\n${buildKG()}\n\nQuestion: ${q}`}]
+        })
+      });
+      const data = await res.json();
+      const ans = (data.content||[]).map(b=>b.text||'').join('') || 'No response.';
+      addMsg('a', ans);
+    } catch(e){ addMsg('a','Error: '+e.message); }
+    btn.textContent='Ask'; btn.disabled=false;
+  }
+  function addMsg(role, text){
+    const box=$('cl-chatbox'); box.querySelector('.muted')?.closest('div')?.remove();
+    const div=document.createElement('div');
+    div.className='cmsg '+role;
+    div.innerHTML = `<div><div class="role">${role==='u'?'YOU':'AI ANALYST'}</div>
+      <div class="txt">${String(text).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</div></div>`;
+    box.appendChild(div); box.scrollTop = box.scrollHeight;
+  }
+  function clrChat(){ $('cl-chatbox').innerHTML='<div class="small muted" style="text-align:center;margin-top:40px">Ask a question about your cleaning data…</div>'; }
+
+  return { loadGenFile, loadCleanFile, loadSample, analyze, goSub,
+    selBAInv, renderBA, renderSoil, renderTS, setQ, doChat, clrChat };
+})();
+</script>
+
 </body>
 </html>
