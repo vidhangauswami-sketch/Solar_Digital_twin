@@ -168,6 +168,7 @@
   <div class="tab" data-v="predict">5 · Predict</div>
   <div class="tab" data-v="bess">6 · BESS / UPS Monitor</div>
   <div class="tab" data-v="clean">7 · Cleaning Analysis</div>
+  <div class="tab" data-v="rag">8 · AI Insights (RAG)</div>
 </div>
 
 <!-- ============ VIEW 1: BUILD ============ -->
@@ -254,10 +255,21 @@
     <div class="row">
       <label class="fld" style="margin:0">Attach data to component:</label>
       <select id="dataComp" style="max-width:260px" onchange="onDataCompChange()"></select>
-      <button onclick="document.getElementById('dataFile').click()">📄 Choose file</button>
+    </div>
+    <div class="caveat" style="margin:10px 0">
+      This is a <b>digital twin</b> — a component's golden dataset can change with the season
+      (summer / monsoon / winter, pre- and post-cleaning, etc.). You can upload <b>multiple datasets</b>
+      per component below; each is kept separately and tagged with a label, and you choose how they're
+      used when training in tab 4.
+    </div>
+    <div class="row">
+      <label class="fld" style="margin:0">Label / season tag:</label>
+      <input type="text" id="dataSeasonLabel" placeholder="e.g. Summer-2026, Monsoon golden dataset…" style="max-width:240px">
+      <button onclick="document.getElementById('dataFile').click()">📄 Upload dataset</button>
       <input type="file" id="dataFile" accept=".csv,.xlsx" style="display:none" onchange="handleData(this)">
       <span id="dataStatus" class="small muted"></span>
     </div>
+    <div id="dataDatasetsList" style="margin-top:10px"></div>
     <div id="dataQuality" style="margin-top:12px"></div>
     <div id="dataPreview" style="margin-top:12px"></div>
     <div id="dataModelSetup" style="margin-top:14px"></div>
@@ -280,6 +292,7 @@
       <select id="targetCol"></select>
       <label class="fld">Feature columns (inputs)</label>
       <div class="feat-list" id="featList"></div>
+      <div id="trainDataSrc" style="margin-top:10px"></div>
       <hr>
       <div class="row">
         <div style="flex:1"><label class="fld">Model</label>
@@ -538,6 +551,54 @@
         <button class="primary" id="cl-cbtn" onclick="CL.doChat()">Ask</button>
         <button onclick="CL.clrChat()">Clear</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ VIEW 8: AI INSIGHTS (ADVANCED RAG) ============ -->
+<div class="view" id="v-rag">
+  <div class="caveat">
+    <b>Advanced RAG (Retrieval-Augmented analysis)</b> over everything in this digital twin — component
+    parameters, every dataset attached to every component (all seasons/tags), trained-model metrics,
+    latest plant-scenario predictions and cleaning-analysis results — plus any extra reference files you
+    upload below (datasheets, SOPs, inspection notes, extra logs…). Ask a question and it retrieves the
+    most relevant pieces of your data and answers <b>only</b> from that retrieved evidence — fully offline,
+    nothing leaves your browser, nothing is fabricated.
+  </div>
+  <div class="grid2">
+    <div class="card">
+      <h3>1 · Reference documents (optional)</h3>
+      <div class="hint">Upload extra files the twin doesn't already have. Accepted: .csv, .xlsx, .txt, .md, .json
+        (read entirely in your browser, same as tab 3).</div>
+      <div class="row" style="margin-top:8px">
+        <button onclick="document.getElementById('ragFile').click()">📎 Add file(s)</button>
+        <input type="file" id="ragFile" accept=".csv,.xlsx,.txt,.md,.json" multiple style="display:none" onchange="ragHandleFiles(this)">
+        <span id="ragUploadMsg" class="small muted"></span>
+      </div>
+      <div id="ragDocList" style="margin-top:10px"></div>
+      <hr>
+      <div class="row">
+        <button class="primary" onclick="ragRebuildIndex()">🔄 Build / refresh knowledge index</button>
+        <span id="ragIndexMsg" class="small muted"></span>
+      </div>
+      <div class="hint">Re-run this after uploading new data, training a model, or adding reference files, so the index reflects the latest state.</div>
+    </div>
+    <div class="card">
+      <h3>What's indexed</h3>
+      <div id="ragIndexSummary" class="small muted">Click "Build / refresh knowledge index".</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3>2 · Ask about your plant</h3>
+    <div class="row" id="ragQpills"></div>
+    <div class="chatbox" id="ragChatbox"><div class="small muted" style="text-align:center;margin-top:40px">
+      Ask a question grounded in your uploaded data…</div></div>
+    <div class="row" style="margin:0">
+      <input type="text" id="ragInput" placeholder="e.g. Which component's model has the weakest R²?"
+        style="flex:1" onkeydown="if(event.key==='Enter')ragAsk()">
+      <button class="primary" id="ragAskBtn" onclick="ragAsk()">Ask</button>
+      <button onclick="ragClearChat()">Clear</button>
     </div>
   </div>
 </div>
@@ -878,17 +939,77 @@ async function inflateRaw(u8){
 }
 
 /* =========================================================================
-   INGEST + DATA QUALITY
+   INGEST + DATA QUALITY  (multi-dataset per component: seasonal / golden data)
    ========================================================================= */
+let dsUid=1;
+function newDsId(){ return 'ds'+(dsUid++)+'_'+Date.now().toString(36); }
+// Old configs / old single-upload flow only ever had n.data. This lazily
+// migrates any such node onto the n.datasets array without changing n.data's
+// identity, so everything that already reads n.data keeps working untouched.
+function ensureDatasets(n){
+  if(!n)return;
+  if(!Array.isArray(n.datasets)){
+    if(n.data && !n.data.id){ n.data.id=newDsId(); n.data.label=n.data.label||n.data.file||'Dataset 1'; n.data.season=n.data.season||''; }
+    n.datasets = n.data ? [n.data] : [];
+  }
+  if(!n.trainOpts) n.trainOpts={ strategy:'active', dsIds:n.datasets.map(d=>d.id), weights:{} };
+}
 function ingest(table,fname){
   const compId=$('dataComp').value;
   const n=find(compId);
   if(!n){ dataErr(new Error('Add a component first, then attach data to it.')); return; }
-  n.data={ headers:table.headers, rows:table.rows, file:fname };
-  $('dataStatus').innerHTML='<span class="ok">✓ '+esc(fname)+' → '+esc(n.label)+' ('+table.rows.length+' rows, '+table.headers.length+' cols)</span>';
+  ensureDatasets(n);
+  const labelInput=$('dataSeasonLabel');
+  const label=(labelInput&&labelInput.value.trim())||('Dataset '+(n.datasets.length+1));
+  const ds={ id:newDsId(), label, season:label, headers:table.headers, rows:table.rows, file:fname,
+    uploadedAt:new Date().toISOString().slice(0,10) };
+  n.datasets.push(ds);
+  n.data=ds;                                   // newest upload becomes the active/preview dataset
+  if(!n.trainOpts.dsIds.includes(ds.id)) n.trainOpts.dsIds.push(ds.id);
+  if(labelInput) labelInput.value='';
+  $('dataStatus').innerHTML='<span class="ok">✓ '+esc(fname)+' → '+esc(n.label)+' as "'+esc(label)+'" ('+table.rows.length+' rows, '+table.headers.length+' cols)</span>';
   renderQuality(n); renderPreview(n);
-  initSelection(n); renderDataModelSetup(n);
+  initSelection(n); renderDataModelSetup(n); renderDatasetList(n);
   refreshSelectors(); renderDiagram(); renderNodeList();
+}
+function renderDatasetList(n){
+  const box=$('dataDatasetsList'); if(!box||!n) return;
+  ensureDatasets(n);
+  if(!n.datasets.length){ box.innerHTML=''; return; }
+  box.innerHTML =
+    '<h3 style="color:var(--muted);font-size:12px;text-transform:uppercase">Datasets attached to '+esc(n.label)+' ('+n.datasets.length+')</h3>'+
+    '<div class="scroll" style="max-height:220px"><table><tr><th>Active</th><th>Label / season</th><th>File</th><th>Rows</th><th>Uploaded</th><th></th></tr>'+
+    n.datasets.map(d=>`<tr>
+      <td>${n.data&&n.data.id===d.id?'<span class="ok">● active</span>':`<button onclick="setActiveDataset('${n.id}','${d.id}')">use</button>`}</td>
+      <td><input type="text" value="${esc(d.label||'')}" style="max-width:170px" onchange="renameDataset('${n.id}','${d.id}',this.value)"></td>
+      <td class="small">${esc(d.file||'')}</td>
+      <td>${d.rows.length}</td>
+      <td class="small muted">${esc(d.uploadedAt||'')}</td>
+      <td><button class="danger" onclick="removeDataset('${n.id}','${d.id}')">✕</button></td>
+    </tr>`).join('')+
+    '</table></div>'+
+    '<div class="hint">"Active" is what tabs 3, 6 (BESS) preview and use as the default. Which dataset(s) actually feed training is chosen in tab 4.</div>';
+}
+function setActiveDataset(nodeId,dsId){
+  const n=find(nodeId); if(!n)return; ensureDatasets(n);
+  const d=n.datasets.find(x=>x.id===dsId); if(!d)return;
+  n.data=d;
+  renderQuality(n); renderPreview(n); initSelection(n); renderDataModelSetup(n); renderDatasetList(n);
+  refreshSelectors(); renderDiagram(); renderNodeList();
+}
+function renameDataset(nodeId,dsId,val){
+  const n=find(nodeId); if(!n)return; const d=(n.datasets||[]).find(x=>x.id===dsId); if(!d)return;
+  d.label=val; d.season=val; renderDatasetList(n);
+}
+function removeDataset(nodeId,dsId){
+  const n=find(nodeId); if(!n)return; ensureDatasets(n);
+  if(!confirm('Remove this dataset from '+n.label+'?'))return;
+  n.datasets=n.datasets.filter(x=>x.id!==dsId);
+  if(n.trainOpts) n.trainOpts.dsIds=n.trainOpts.dsIds.filter(id=>id!==dsId);
+  if(n.data&&n.data.id===dsId) n.data=n.datasets[n.datasets.length-1]||null;
+  if(n.data){ renderQuality(n); renderPreview(n); initSelection(n); renderDataModelSetup(n); }
+  else{ ['dataQuality','dataPreview','dataModelSetup'].forEach(id=>{if($(id))$(id).innerHTML='';}); }
+  renderDatasetList(n); refreshSelectors(); renderDiagram(); renderNodeList();
 }
 function renderQuality(n){
   const {headers,rows}=n.data;
@@ -957,10 +1078,12 @@ function syncSelHint(n){
 }
 function onDataCompChange(){
   const n=find($('dataComp').value);
+  if(n)ensureDatasets(n);
   if(n&&n.data){renderQuality(n);renderPreview(n);initSelection(n);renderDataModelSetup(n);
     $('dataStatus').innerHTML='<span class="muted small">showing saved data for '+esc(n.label)+' · '+n.data.rows.length+' rows</span>';}
   else{['dataQuality','dataPreview','dataModelSetup'].forEach(id=>{if($(id))$(id).innerHTML='';});
     $('dataStatus').innerHTML='<span class="muted small">no data uploaded for this component yet</span>';}
+  if(n)renderDatasetList(n); else if($('dataDatasetsList'))$('dataDatasetsList').innerHTML='';
 }
 
 /* =========================================================================
@@ -980,6 +1103,41 @@ function buildMatrix(n,featCols,targetCol){
     X.push(xs); Y.push(y);
   });
   return {X,Y,dropped};
+}
+/* ---- multi-dataset training: user-chosen strategy across seasonal/golden datasets ---- */
+function buildMergedMatrix(n,featCols,targetCol,opt){
+  ensureDatasets(n);
+  const all=n.datasets&&n.datasets.length?n.datasets:(n.data?[n.data]:[]);
+  let use=all;
+  if(opt&&all.length>1){
+    if(opt.strategy==='select'||opt.strategy==='weighted'){
+      const ids=new Set(opt.dsIds&&opt.dsIds.length?opt.dsIds:all.map(d=>d.id));
+      use=all.filter(d=>ids.has(d.id));
+    } else if(opt.strategy==='active'){
+      use=n.data?[n.data]:all;
+    } // 'all' -> use=all (default)
+  } else if(n.data){
+    use=[n.data];
+  }
+  if(!use.length) use=n.data?[n.data]:[];
+
+  const X=[],Y=[]; let dropped=0; const perDs=[];
+  use.forEach(ds=>{
+    const hi=ds.headers||[];
+    const fi=featCols.map(c=>hi.indexOf(c));
+    const ti=hi.indexOf(targetCol);
+    if(fi.some(j=>j<0)||ti<0){ perDs.push({ds,used:0,skippedCols:true}); return; }
+    const weight=(opt&&opt.strategy==='weighted')?Math.max(1,Math.round(opt.weights[ds.id]||1)):1;
+    let used=0;
+    (ds.rows||[]).forEach(r=>{
+      const xs=fi.map(j=>Number(r[j])); const y=Number(r[ti]);
+      if(xs.some(v=>!isFinite(v))||!isFinite(y)){dropped++;return;}
+      for(let rep=0;rep<weight;rep++){ X.push(xs.slice()); Y.push(y); }
+      used++;
+    });
+    perDs.push({ds,used,weight});
+  });
+  return {X,Y,dropped,perDs};
 }
 function standardize(X){
   const m=X[0].length, mean=Array(m).fill(0), std=Array(m).fill(0);
@@ -1002,7 +1160,8 @@ function trainModel(){
   if(feats.includes(target)){alert('Target cannot also be a feature.');return;}
   n.selTarget=target; n.selFeats=feats;   // remember the choice on the component
 
-  const {X,Y,dropped}=buildMatrix(n,feats,target);
+  ensureDatasets(n);
+  const {X,Y,dropped}=buildMergedMatrix(n,feats,target,n.trainOpts);
   if(X.length<8){alert('Not enough clean numeric rows to train ('+X.length+'). Need ≥ 8.');return;}
 
   // train/val split (shuffled, seeded)
@@ -1113,7 +1272,8 @@ async function trainNN(){
   if(feats.includes(target)){alert('Target cannot also be a feature.');return;}
   n.selTarget=target; n.selFeats=feats;
 
-  const {X,Y,dropped}=buildMatrix(n,feats,target);   // uses ALL rows
+  ensureDatasets(n);
+  const {X,Y,dropped}=buildMergedMatrix(n,feats,target,n.trainOpts);   // uses the chosen dataset(s)
   if(X.length<10){alert('Not enough clean numeric rows to train ('+X.length+'). Need ≥ 10.');return;}
 
   $('nnMsg').innerHTML='<span class="muted">loading TensorFlow.js…</span>';
@@ -1377,17 +1537,80 @@ function fillCompSelect(id,trainedOnly){
 function syncTrainCols(){
   const n=find($('trainComp').value);
   const tc=$('targetCol'), fl=$('featList');
-  if(!n||!n.data){tc.innerHTML='<option value="">— upload data first (tab 3) —</option>';fl.innerHTML='<span class="muted small">No data.</span>';return;}
+  if(!n||!n.data){tc.innerHTML='<option value="">— upload data first (tab 3) —</option>';fl.innerHTML='<span class="muted small">No data.</span>';
+    if($('trainDataSrc'))$('trainDataSrc').innerHTML='';return;}
+  ensureDatasets(n);
   const numeric=numericCols(n);
   if(!Array.isArray(n.selFeats))n.selFeats=[];
   tc.innerHTML=numeric.map(h=>`<option ${h===n.selTarget?'selected':''}>${esc(h)}</option>`).join('');
   if(!n.selTarget&&numeric.length)n.selTarget=tc.value;
   fl.innerHTML=numeric.map(h=>`<label><input type="checkbox" class="featchk" value="${esc(h)}" ${n.selFeats.includes(h)?'checked':''}>${esc(h)}</label>`).join('');
   // keep the two tabs in sync: writing back to the node
-  tc.onchange=()=>{n.selTarget=tc.value;};
+  tc.onchange=()=>{n.selTarget=tc.value;updateTrainDsInfo(n);};
   fl.querySelectorAll('.featchk').forEach(cb=>cb.addEventListener('change',()=>{
     n.selFeats=[...fl.querySelectorAll('.featchk:checked')].map(x=>x.value);
+    updateTrainDsInfo(n);
   }));
+  renderTrainDataSrc(n);
+}
+/* ---- training-data source picker: what to do when several datasets are attached ---- */
+function renderTrainDataSrc(n){
+  const box=$('trainDataSrc'); if(!box)return;
+  if(!n||!n.datasets||!n.datasets.length){box.innerHTML='';return;}
+  const ds=n.datasets, opt=n.trainOpts;
+  if(ds.length===1){
+    box.innerHTML='<div class="hint">1 dataset attached: <b>'+esc(ds[0].label||ds[0].file)+'</b> ('+ds[0].rows.length+' rows).</div>';
+    return;
+  }
+  box.innerHTML=`
+    <label class="fld">Training data source — ${ds.length} datasets attached (e.g. season-wise golden datasets)</label>
+    <select id="trainStrategy">
+      <option value="active" ${opt.strategy==='active'?'selected':''}>Use active dataset only (${esc((n.data&&(n.data.label||n.data.file))||'—')})</option>
+      <option value="all" ${opt.strategy==='all'?'selected':''}>Merge ALL datasets</option>
+      <option value="select" ${opt.strategy==='select'?'selected':''}>Merge selected datasets…</option>
+      <option value="weighted" ${opt.strategy==='weighted'?'selected':''}>Weighted merge (favor chosen season(s))</option>
+    </select>
+    <div id="trainDsPick" style="margin-top:8px"></div>
+    <div class="hint" id="trainDsInfo" style="margin-top:4px"></div>`;
+  $('trainStrategy').onchange=()=>{ opt.strategy=$('trainStrategy').value; renderTrainDsPick(n); updateTrainDsInfo(n); };
+  renderTrainDsPick(n); updateTrainDsInfo(n);
+}
+function renderTrainDsPick(n){
+  const box=$('trainDsPick'); if(!box)return;
+  const opt=n.trainOpts;
+  if(opt.strategy==='select'){
+    box.innerHTML=n.datasets.map(d=>`<label style="display:block;margin:2px 0">
+      <input type="checkbox" class="trainDsChk" value="${d.id}" ${opt.dsIds.includes(d.id)?'checked':''}>
+      ${esc(d.label||d.file)} <span class="muted small">(${d.rows.length} rows${d.season?', '+esc(d.season):''})</span></label>`).join('');
+    box.querySelectorAll('.trainDsChk').forEach(cb=>cb.addEventListener('change',()=>{
+      opt.dsIds=[...box.querySelectorAll('.trainDsChk:checked')].map(x=>x.value); updateTrainDsInfo(n);
+    }));
+  } else if(opt.strategy==='weighted'){
+    box.innerHTML=n.datasets.map(d=>`<div class="row" style="margin:2px 0;align-items:center">
+      <input type="checkbox" class="trainDsChk" value="${d.id}" ${opt.dsIds.includes(d.id)?'checked':''}>
+      <span style="flex:1">${esc(d.label||d.file)} <span class="muted small">(${d.rows.length} rows)</span></span>
+      <label class="small muted" style="margin:0">weight</label>
+      <input type="number" class="trainDsW" data-id="${d.id}" value="${opt.weights[d.id]||1}" min="1" max="10" style="max-width:64px">
+    </div>`).join('');
+    box.querySelectorAll('.trainDsChk').forEach(cb=>cb.addEventListener('change',()=>{
+      opt.dsIds=[...box.querySelectorAll('.trainDsChk:checked')].map(x=>x.value); updateTrainDsInfo(n);
+    }));
+    box.querySelectorAll('.trainDsW').forEach(inp=>inp.addEventListener('change',()=>{
+      opt.weights[inp.dataset.id]=Math.max(1,parseInt(inp.value)||1); updateTrainDsInfo(n);
+    }));
+  } else { box.innerHTML=''; }
+}
+function updateTrainDsInfo(n){
+  const el=$('trainDsInfo'); if(!el||!n)return;
+  const opt=n.trainOpts, target=$('targetCol')?$('targetCol').value:n.selTarget;
+  const feats=[...document.querySelectorAll('.featchk:checked')].map(c=>c.value);
+  if(!target||!feats.length){el.textContent='Pick target + features above to preview row counts.';return;}
+  try{
+    const {X,dropped,perDs}=buildMergedMatrix(n,feats,target,opt);
+    el.innerHTML='Will train on <b>'+X.length+'</b> row(s)'+(dropped?' ('+dropped+' dropped — non-numeric/blank)':'')+
+      '<br>'+perDs.map(p=>esc(p.ds.label||p.ds.file)+': '+(p.skippedCols?'<span class="warn">missing target/feature column</span>':
+        p.used+' row(s)'+(p.weight&&p.weight>1?' × weight '+p.weight:''))).join(' · ');
+  }catch(e){ el.textContent=''; }
 }
 function saveConfig(){
   // Drop live TensorFlow.js models — they can't be JSON-serialized (retrain after load).
@@ -2073,6 +2296,194 @@ function bessWriteParams(){
 }
 
 /* =========================================================================
+   ADVANCED RAG — retrieval-augmented analysis over the whole digital twin,
+   plus any extra reference files, fully offline (no external libraries).
+   ========================================================================= */
+let ragDocs=[];    // extra uploaded reference files: {id,name,rows?,headers?,text?}
+let ragIndex=[];   // retrieval corpus: {source,text}
+let ragUid2=1;
+
+function ragHandleFiles(input){
+  const files=[...input.files]; if(!files.length)return;
+  $('ragUploadMsg').textContent='reading '+files.length+' file(s)…';
+  let pending=files.length, failed=[];
+  const finish=()=>{ if(pending>0)return;
+    $('ragUploadMsg').innerHTML = failed.length
+      ? '<span class="bad">✕ '+failed.map(esc).join('; ')+'</span>'
+      : '<span class="ok">✓ added</span>';
+    renderRagDocList();
+  };
+  files.forEach(f=>{
+    const ext=f.name.toLowerCase().split('.').pop();
+    const done=doc=>{ ragDocs.push(doc); pending--; finish(); };
+    const fail=e=>{ failed.push(f.name+': '+e.message); pending--; finish(); };
+    if(ext==='csv'){
+      const rd=new FileReader();
+      rd.onload=()=>{ try{ const t=parseCSV(rd.result); done({id:'rd'+(ragUid2++),name:f.name,headers:t.headers,rows:t.rows}); }catch(e){fail(e);} };
+      rd.onerror=()=>fail(new Error('read error'));
+      rd.readAsText(f);
+    } else if(ext==='xlsx'){
+      const rd=new FileReader();
+      rd.onload=async()=>{ try{ const t=await parseXLSX(rd.result); done({id:'rd'+(ragUid2++),name:f.name,headers:t.headers,rows:t.rows}); }catch(e){fail(e);} };
+      rd.onerror=()=>fail(new Error('read error'));
+      rd.readAsArrayBuffer(f);
+    } else if(ext==='json'||ext==='txt'||ext==='md'){
+      const rd=new FileReader();
+      rd.onload=()=>{ done({id:'rd'+(ragUid2++),name:f.name,text:rd.result}); };
+      rd.onerror=()=>fail(new Error('read error'));
+      rd.readAsText(f);
+    } else { fail(new Error('unsupported type .'+ext)); }
+  });
+  input.value='';
+}
+function renderRagDocList(){
+  const box=$('ragDocList'); if(!box)return;
+  if(!ragDocs.length){ box.innerHTML='<span class="muted small">No reference files uploaded yet.</span>'; return; }
+  box.innerHTML=ragDocs.map(d=>`<span class="pill">${esc(d.name)}
+    <span class="muted">(${d.rows?d.rows.length+' rows':((d.text||'').length+' chars')})</span>
+    <a href="javascript:void 0" onclick="ragRemoveDoc('${d.id}')" style="margin-left:6px;color:var(--red)">✕</a></span>`).join(' ');
+}
+function ragRemoveDoc(id){ ragDocs=ragDocs.filter(d=>d.id!==id); renderRagDocList(); }
+
+/* ---- corpus: chunk the whole app state + uploaded reference files ---- */
+function ragBuildCorpus(){
+  const chunks=[];
+  const push=(source,text)=>{ if(text&&String(text).trim()) chunks.push({source,text:String(text).trim()}); };
+  const colStats=(headers,rows,cap)=>{
+    const numCols=(headers||[]).filter((h,j)=>{
+      let ok=0; rows.forEach(r=>{ if(String(r[j]).trim()!==''&&isFinite(Number(r[j]))) ok++; });
+      return ok>2;
+    });
+    let txt='';
+    numCols.slice(0,cap||8).forEach(h=>{
+      const j=headers.indexOf(h);
+      const vals=rows.map(r=>Number(r[j])).filter(isFinite);
+      if(!vals.length)return;
+      const mn=Math.min(...vals),mx=Math.max(...vals),mean=vals.reduce((a,b)=>a+b,0)/vals.length;
+      txt+=` ${h}: min=${fmt(mn)} max=${fmt(mx)} mean=${fmt(mean)};`;
+    });
+    return txt||' none numeric.';
+  };
+
+  state.nodes.forEach(n=>{
+    const pr=Object.entries(n.params||{}).map(([k,v])=>`${k}=${v}`).join(', ');
+    push('Component: '+n.label, `Component "${n.label}" (type: ${n.type}).`+(pr?` Parameters: ${pr}.`:' No parameters set.'));
+
+    ensureDatasets(n);
+    (n.datasets||[]).forEach(d=>{
+      push('Dataset: '+n.label+' / '+(d.label||d.file),
+        `Dataset "${d.label||d.file}" attached to component "${n.label}" `+
+        (d.season?`(season/tag: ${d.season}). `:'. ')+
+        `${d.rows.length} rows, ${(d.headers||[]).length} columns: ${(d.headers||[]).join(', ')}. `+
+        `Column stats —${colStats(d.headers,d.rows)}`+
+        (n.data&&n.data.id===d.id?' [currently the active dataset for this component]':''));
+    });
+
+    if(n.model){
+      const m=n.model;
+      push('Trained model: '+n.label,
+        `Component "${n.label}" has a trained ${m.type==='nn'?'deep neural network':m.type==='mlp'?'1-hidden-layer network':'ridge/linear'} model `+
+        `predicting "${m.target}" from [${m.feats.join(', ')}]. R²=${m.metrics.r2.toFixed(3)}, RMSE=${fmt(m.metrics.rmse)}, MAE=${fmt(m.metrics.mae)}, `+
+        `trained on ${m.nTrain} rows / validated on ${m.nVal} rows${m.dropped?`, ${m.dropped} rows dropped`:''}.`);
+    }
+    if(n.lastPred){
+      push('Last prediction: '+n.label, `Component "${n.label}" last plant-scenario prediction: ${n.lastPred.target} = ${fmt(n.lastPred.value)}.`);
+    }
+  });
+
+  try{ if(typeof CL!=='undefined'&&CL.getKG){ const kg=CL.getKG(); if(kg) push('Cleaning analysis results', kg); } }catch(e){}
+
+  ragDocs.forEach(d=>{
+    if(d.rows){
+      push('Uploaded file: '+d.name,
+        `Reference file "${d.name}" — ${d.rows.length} rows, columns: ${(d.headers||[]).join(', ')}. Column stats —${colStats(d.headers,d.rows,10)}`);
+      const sample=d.rows.slice(0,50);
+      for(let i=0;i<sample.length;i+=10){
+        const grp=sample.slice(i,i+10);
+        const txt=grp.map(r=>d.headers.map((h,j)=>`${h}=${r[j]}`).join(', ')).join(' | ');
+        push(`Uploaded file rows: ${d.name} [${i+1}-${i+grp.length}]`, txt);
+      }
+    } else if(d.text){
+      const paras=d.text.split(/\n\s*\n/).filter(p=>p.trim());
+      let buf='';
+      paras.forEach(p=>{
+        if((buf+p).length>800){ if(buf)push('Uploaded file: '+d.name,buf); buf=p; }
+        else buf+=(buf?'\n\n':'')+p;
+      });
+      if(buf)push('Uploaded file: '+d.name,buf);
+    }
+  });
+  return chunks;
+}
+function ragRebuildIndex(){
+  ragIndex=ragBuildCorpus();
+  $('ragIndexMsg').innerHTML='<span class="ok">✓ '+ragIndex.length+' chunk(s) indexed</span>';
+  $('ragIndexSummary').innerHTML = ragIndex.length
+    ? `<div class="metric"><span>Total chunks</span><b>${ragIndex.length}</b></div>`+
+      `<div class="metric"><span>Components</span><b>${state.nodes.length}</b></div>`+
+      `<div class="metric"><span>Datasets attached</span><b>${state.nodes.reduce((s,n)=>s+((n.datasets||[]).length),0)}</b></div>`+
+      `<div class="metric"><span>Trained models</span><b>${state.nodes.filter(n=>n.model).length}</b></div>`+
+      `<div class="metric"><span>Uploaded reference files</span><b>${ragDocs.length}</b></div>`+
+      `<div class="small muted" style="margin-top:6px">Re-run this after new uploads or training, so the index stays current.</div>`
+    : '<span class="warn">Nothing to index yet — add components/data or upload a reference file.</span>';
+  renderRagQpills();
+}
+function renderRagQpills(){
+  const box=$('ragQpills'); if(!box)return;
+  const qs=['Summarize what data is available for this plant.',
+    'Which trained model has the weakest R²?',
+    'List the datasets attached to each component.',
+    'Any data-quality issues I should know about?'];
+  box.innerHTML=qs.map(q=>`<button class="qp" onclick="ragSetQ(this)">${esc(q)}</button>`).join('');
+}
+function ragSetQ(el){ $('ragInput').value=el.textContent; }
+
+/* ---- retrieval: offline keyword/overlap scoring (no network, no API key) ---- */
+const RAG_STOP=new Set(['the','a','an','is','are','of','to','in','on','for','and','or','what','which','how',
+  'was','were','with','it','this','that','do','does','my','me','please','tell','about','you','your']);
+function ragTokenize(s){ return String(s).toLowerCase().match(/[a-z0-9%²·.]+/g)||[]; }
+function ragScoreChunk(qTokens,chunk){
+  const cTokens=ragTokenize(chunk.text+' '+chunk.source);
+  let score=0;
+  qTokens.forEach(qt=>{
+    cTokens.forEach(ct=>{ if(ct===qt)score+=2; else if(ct.length>2&&(ct.includes(qt)||qt.includes(ct)))score+=0.4; });
+  });
+  return score;
+}
+function ragRetrieve(query,k){
+  const qTokens=[...new Set(ragTokenize(query).filter(t=>t.length>1&&!RAG_STOP.has(t)))];
+  if(!qTokens.length)return[];
+  const scored=ragIndex.map(c=>({c,s:ragScoreChunk(qTokens,c)})).filter(x=>x.s>0);
+  scored.sort((a,b)=>b.s-a.s);
+  return scored.slice(0,k).map(x=>x.c);
+}
+function ragAsk(){
+  const inp=$('ragInput'); const q=inp.value.trim(); if(!q)return;
+  inp.value=''; ragAddMsg('u',q);
+  if(!ragIndex.length) ragRebuildIndex();
+  const top=ragRetrieve(q,8);
+  if(!top.length){
+    ragAddMsg('a','No indexed data matches that question. Try "Build / refresh knowledge index", upload relevant data/reference files, or rephrase the question.');
+    return;
+  }
+  ragAddMsg('a', ragSynthesize(q,top));
+}
+function ragSynthesize(query,chunks){
+  const body=chunks.map(c=>`• [${c.source}] ${c.text}`).join('\n');
+  return 'Based on '+chunks.length+' retrieved item(s) from your plant data:\n\n'+body+
+    '\n\n(Retrieval-based answer — every line above is pulled verbatim from your indexed data, nothing is invented. '+
+    'Re-run "Build / refresh knowledge index" after uploading or training more.)';
+}
+function ragAddMsg(role,text){
+  const box=$('ragChatbox'); box.querySelector('.muted')?.closest('div')?.remove();
+  const div=document.createElement('div'); div.className='cmsg '+role;
+  div.innerHTML=`<div><div class="role">${role==='u'?'YOU':'RAG ANALYST'}</div>`+
+    `<div class="txt">${String(text).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</div></div>`;
+  box.appendChild(div); box.scrollTop=box.scrollHeight;
+}
+function ragClearChat(){ $('ragChatbox').innerHTML='<div class="small muted" style="text-align:center;margin-top:40px">Ask a question grounded in your uploaded data…</div>'; }
+
+/* =========================================================================
    INIT (with a tiny starter plant so the canvas isn't empty)
    ========================================================================= */
 initPalette();
@@ -2092,6 +2503,7 @@ const L=(a,b)=>state.wires.push({id:'w'+(uid++),from:state.nodes[a].id,to:state.
 L(0,1); L(1,2); L(2,3); L(3,4); L(4,5); L(2,6);
 L(8,7); L(7,2); L(6,9);   // BESS → PCS → LT bus ;  Aux Tx → UPS
 renderDiagram();refreshSelectors();renderNodeList();
+renderRagDocList();renderRagQpills();
 </script>
 <script>
 "use strict";
@@ -2644,7 +3056,8 @@ const CL = (function(){
   function clrChat(){ $('cl-chatbox').innerHTML='<div class="small muted" style="text-align:center;margin-top:40px">Ask a question about your cleaning data…</div>'; }
 
   return { loadGenFile, loadCleanFile, loadSample, analyze, goSub,
-    selBAInv, renderBA, renderSoil, renderTS, setQ, doChat, clrChat };
+    selBAInv, renderBA, renderSoil, renderTS, setQ, doChat, clrChat,
+    getKG: ()=> D ? buildKG() : null };   // exposed so tab 8 (Advanced RAG) can index this analysis too
 })();
 </script>
 
