@@ -157,6 +157,8 @@
     <button onclick="saveConfig()">⬇ Save config (.json)</button>
     <button onclick="document.getElementById('cfgFile').click()">⬆ Load config</button>
     <input type="file" id="cfgFile" accept=".json" style="display:none" onchange="loadConfig(this)">
+    <span id="storeBadge" class="small muted" title="Everything (components, all datasets, trained XGB/CatBoost/linear models) is auto-saved in your browser's IndexedDB"></span>
+    <button class="danger" onclick="twinClearSaved()">🗑 Clear saved data</button>
   </div>
 </header>
 
@@ -346,6 +348,88 @@
           </div>
           <button class="primary" style="width:100%;margin-top:10px" id="btnTrainNN" onclick="trainNN()">▶ Train Neural Network</button>
           <div id="nnMsg" class="small" style="margin-top:8px"></div>
+        </div>
+      </div>
+
+      <!-- ===== XGBoost ===== -->
+      <div style="border:1px solid var(--line);border-radius:8px;padding:11px;margin-top:10px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="xgbEnable"
+            onchange="document.getElementById('xgbControls').style.display=this.checked?'block':'none'">
+          <b style="color:var(--amber2)">🌲 Enable XGBoost (gradient-boosted trees)</b>
+        </label>
+        <div class="hint">XGBoost-style boosting: 2nd-order gradients, L2 leaf regularisation (λ), split penalty (γ), min child weight, row &amp; column subsampling, histogram splits. Pure JavaScript — runs fully offline. Great for tabular SCADA data (irradiance, temp → power).</div>
+        <div id="xgbControls" style="display:none;margin-top:10px">
+          <div class="row">
+            <div style="flex:1"><label class="fld">Trees (rounds)</label>
+              <input type="number" id="xgbTrees" value="300" min="10" max="3000"></div>
+            <div style="flex:1"><label class="fld">Learning rate (eta)</label>
+              <input type="number" id="xgbEta" value="0.1" step="0.01" min="0.005" max="1"></div>
+          </div>
+          <div class="row">
+            <div style="flex:1"><label class="fld">Max depth</label>
+              <input type="number" id="xgbDepth" value="6" min="1" max="12"></div>
+            <div style="flex:1"><label class="fld">Min child weight</label>
+              <input type="number" id="xgbMinChild" value="3" min="1" max="200"></div>
+          </div>
+          <div class="row">
+            <div style="flex:1"><label class="fld">λ (L2 reg)</label>
+              <input type="number" id="xgbLambda" value="1" step="0.1" min="0"></div>
+            <div style="flex:1"><label class="fld">γ (min split gain)</label>
+              <input type="number" id="xgbGamma" value="0" step="0.01" min="0"></div>
+          </div>
+          <div class="row">
+            <div style="flex:1"><label class="fld">Row subsample</label>
+              <input type="number" id="xgbSub" value="0.8" step="0.05" min="0.1" max="1"></div>
+            <div style="flex:1"><label class="fld">Column subsample</label>
+              <input type="number" id="xgbCol" value="1" step="0.05" min="0.1" max="1"></div>
+          </div>
+          <div class="row">
+            <div style="flex:1"><label class="fld">Histogram bins</label>
+              <input type="number" id="xgbBins" value="64" min="8" max="255"></div>
+            <div style="flex:1"><label class="fld">Early stopping rounds (0 = off)</label>
+              <input type="number" id="xgbEarly" value="30" min="0" max="500"></div>
+          </div>
+          <button class="primary" style="width:100%;margin-top:10px" id="btnTrainXGB" onclick="trainGBM('xgb')">▶ Train XGBoost</button>
+          <div id="xgbMsg" class="small" style="margin-top:8px"></div>
+        </div>
+      </div>
+
+      <!-- ===== CatBoost ===== -->
+      <div style="border:1px solid var(--line);border-radius:8px;padding:11px;margin-top:10px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="catEnable"
+            onchange="document.getElementById('catControls').style.display=this.checked?'block':'none'">
+          <b style="color:var(--blue)">🐈 Enable CatBoost (symmetric / oblivious trees)</b>
+        </label>
+        <div class="hint">CatBoost-style boosting: oblivious (symmetric) trees — same split at every node of a level — with L2 leaf regularisation and random-strength noise on split scores. Very robust to overfitting on small datasets (a few hundred rows). Pure JavaScript, fully offline.</div>
+        <div id="catControls" style="display:none;margin-top:10px">
+          <div class="row">
+            <div style="flex:1"><label class="fld">Iterations (trees)</label>
+              <input type="number" id="catTrees" value="500" min="10" max="5000"></div>
+            <div style="flex:1"><label class="fld">Learning rate</label>
+              <input type="number" id="catEta" value="0.05" step="0.01" min="0.005" max="1"></div>
+          </div>
+          <div class="row">
+            <div style="flex:1"><label class="fld">Depth</label>
+              <input type="number" id="catDepth" value="6" min="1" max="10"></div>
+            <div style="flex:1"><label class="fld">l2_leaf_reg</label>
+              <input type="number" id="catLambda" value="3" step="0.5" min="0"></div>
+          </div>
+          <div class="row">
+            <div style="flex:1"><label class="fld">Random strength</label>
+              <input type="number" id="catRand" value="1" step="0.1" min="0"></div>
+            <div style="flex:1"><label class="fld">Row subsample</label>
+              <input type="number" id="catSub" value="0.8" step="0.05" min="0.1" max="1"></div>
+          </div>
+          <div class="row">
+            <div style="flex:1"><label class="fld">Border count (bins)</label>
+              <input type="number" id="catBins" value="128" min="8" max="255"></div>
+            <div style="flex:1"><label class="fld">Early stopping rounds (0 = off)</label>
+              <input type="number" id="catEarly" value="50" min="0" max="500"></div>
+          </div>
+          <button class="primary" style="width:100%;margin-top:10px" id="btnTrainCAT" onclick="trainGBM('cat')">▶ Train CatBoost</button>
+          <div id="catMsg" class="small" style="margin-top:8px"></div>
         </div>
       </div>
     </div>
@@ -1028,9 +1112,11 @@ function renderQuality(n){
 }
 function renderPreview(n){
   const {headers,rows}=n.data;
-  const show=rows.slice(0,12);
-  $('dataPreview').innerHTML='<h3 style="color:var(--muted);font-size:12px;text-transform:uppercase">Preview (first 12 rows)</h3>'+
-    '<div class="scroll"><table><tr>'+headers.map(h=>`<th>${esc(h)}</th>`).join('')+'</tr>'+
+  const PREVIEW_MAX=500;
+  const show=rows.slice(0,PREVIEW_MAX);
+  $('dataPreview').innerHTML='<h3 style="color:var(--muted);font-size:12px;text-transform:uppercase">Preview ('+
+      (rows.length>PREVIEW_MAX?'first '+PREVIEW_MAX+' of ':'all ')+rows.length+' stored rows — scroll inside the table)</h3>'+
+    '<div class="scroll" style="max-height:380px"><table><tr>'+headers.map(h=>`<th>${esc(h)}</th>`).join('')+'</tr>'+
     show.map(r=>'<tr>'+r.map(c=>`<td>${esc(c)}</td>`).join('')+'</tr>').join('')+'</table></div>';
 }
 
@@ -1338,6 +1424,9 @@ async function trainNN(){
 
 function predictOne(m,xraw){
   const z=xraw.map((v,j)=>(v-m.sx.mean[j])/m.sx.std[j]);
+  if(m.model.kind==='xgb'||m.model.kind==='cat'){
+    return gbmPredictZ(m.model,z)*m.sy.std+m.sy.mean;
+  }
   if(m.model.kind==='tfnn'){
     const out=m.model.tfModel.predict(tf.tensor2d([z]));
     const v=out.dataSync()[0]; out.dispose();
@@ -1378,7 +1467,8 @@ function showMetrics(m){
     <div class="metric"><span>MAE (orig units)</span><b>${fmt(m.metrics.mae)}</b></div>
     <div class="metric"><span>Final train loss</span><b>${m.hist.train.at(-1).toExponential(2)}</b></div>
     <div class="metric"><span>Final val loss</span><b>${(m.hist.val.at(-1)??0).toExponential(2)}</b></div>
-    <div class="small muted" style="margin-top:8px">Model: ${m.type==='nn'?('deep NN ['+((m.model&&m.model.arch)||[]).join('-')+'] '+((m.model&&m.model.activation)||'')):m.type==='mlp'?'1-hidden-layer net':'ridge/linear'} · ${m.feats.length} feature(s) → ${esc(m.target)}.
+    ${gbmImportanceHtml(m)}
+    <div class="small muted" style="margin-top:8px">Model: ${m.type==='xgb'?('XGBoost · '+m.model.trees.length+' trees, depth '+m.model.params.depth+', eta '+m.model.params.eta+(m.model.stoppedEarly?' (early-stopped)':'')):m.type==='cat'?('CatBoost · '+m.model.trees.length+' oblivious trees, depth '+m.model.params.depth+', lr '+m.model.params.eta+(m.model.stoppedEarly?' (early-stopped)':'')):m.type==='nn'?('deep NN ['+((m.model&&m.model.arch)||[]).join('-')+'] '+((m.model&&m.model.activation)||'')):m.type==='mlp'?'1-hidden-layer net':'ridge/linear'} · ${m.feats.length} feature(s) → ${esc(m.target)}.
     ${r2<0.3?'<br><span class="warn">Low R² — features may not explain the target, or the relationship is more complex than this model captures.</span>':''}</div>`;
 }
 
@@ -1614,18 +1704,15 @@ function updateTrainDsInfo(n){
 }
 function saveConfig(){
   // Drop live TensorFlow.js models — they can't be JSON-serialized (retrain after load).
-  const blob=new Blob([JSON.stringify(state,(k,v)=>k==='tfModel'?undefined:v,2)],{type:'application/json'});
+  // Compact JSON (no indent) and the active dataset stored as a reference, not a 2nd copy.
+  const blob=new Blob([twinSerialize()],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
   a.download='plant_twin_config.json';a.click();
 }
 function loadConfig(input){
   const f=input.files[0];if(!f)return;const rd=new FileReader();
   rd.onload=()=>{try{const s=JSON.parse(rd.result);
-    state=Object.assign({nodes:[],wires:[],sel:null,connectFrom:null,connectMode:false},s);
-    state.connectMode=false;state.connectFrom=null;
-    let mx=1;state.nodes.forEach(n=>{const num=+String(n.id).replace(/\D/g,'');if(num>=mx)mx=num+1;});uid=mx;
-    // A saved NN has no restorable weights — clear it so it isn't shown as usable.
-    state.nodes.forEach(n=>{ if(n.model&&n.model.model&&n.model.model.kind==='tfnn'){ n.model=null; n.lastPred=null; } });
+    twinRestore(s);
     renderDiagram();refreshSelectors();renderNodeList();
     alert('Config loaded: '+state.nodes.length+' components.');
   }catch(e){alert('Invalid config file: '+e.message);}};
@@ -2397,7 +2484,7 @@ function ragBuildCorpus(){
     if(d.rows){
       push('Uploaded file: '+d.name,
         `Reference file "${d.name}" — ${d.rows.length} rows, columns: ${(d.headers||[]).join(', ')}. Column stats —${colStats(d.headers,d.rows,10)}`);
-      const sample=d.rows.slice(0,50);
+      const sample=d.rows.slice(0,1000);
       for(let i=0;i<sample.length;i+=10){
         const grp=sample.slice(i,i+10);
         const txt=grp.map(r=>d.headers.map((h,j)=>`${h}=${r[j]}`).join(', ')).join(' | ');
@@ -3058,6 +3145,319 @@ const CL = (function(){
   return { loadGenFile, loadCleanFile, loadSample, analyze, goSub,
     selBAInv, renderBA, renderSoil, renderTS, setQ, doChat, clrChat,
     getKG: ()=> D ? buildKG() : null };   // exposed so tab 8 (Advanced RAG) can index this analysis too
+})();
+</script>
+
+<script>
+"use strict";
+/* =========================================================================
+   GRADIENT-BOOSTED TREES  —  XGBoost-style & CatBoost-style, pure JS
+   Trained on the same standardized X / y as the other models, so the
+   existing predictOne / plant-scenario / prediction tab work unchanged.
+   Trees are plain JSON → they save with the config and in browser storage.
+   ========================================================================= */
+function gbmCuts(Z,maxBins){
+  const nf=Z[0].length, cuts=[];
+  for(let j=0;j<nf;j++){
+    const col=Z.map(r=>r[j]).sort((a,b)=>a-b);
+    const u=[];
+    for(let b=1;b<maxBins;b++){
+      const v=col[Math.min(col.length-1,Math.floor(b*col.length/maxBins))];
+      if(!u.length||v>u[u.length-1]) u.push(v);
+    }
+    while(u.length&&u[u.length-1]>=col[col.length-1]) u.pop();   // no empty right side
+    cuts.push(u);
+  }
+  return cuts;
+}
+function gbmBinOf(v,c){ let lo=0,hi=c.length; while(lo<hi){const m=(lo+hi)>>1; if(v<=c[m])hi=m; else lo=m+1;} return lo; }
+function gbmGauss(rng){ let u=0,v=0; while(u===0)u=rng(); v=rng(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+
+/* ---- XGBoost: depth-wise tree, gain = ½[GL²/(HL+λ)+GR²/(HR+λ)−G²/(H+λ)] − γ ---- */
+function xgbBuildTree(B,g,h,idx,cuts,feats,P,imp){
+  const nodes=[];
+  const leaf=(G,H)=>({v:-G/(H+P.lambda)*P.eta});
+  function build(ix,depth){
+    let G=0,H=0; for(const i of ix){G+=g[i];H+=h[i];}
+    const id=nodes.length; nodes.push(null);
+    if(depth>=P.depth||ix.length<2*P.minChild){ nodes[id]=leaf(G,H); return id; }
+    const parent=G*G/(H+P.lambda);
+    let best={gain:0,f:-1,b:-1};
+    for(const j of feats){
+      const nb=cuts[j].length+1; if(nb<2)continue;
+      const hg=new Float64Array(nb), hh=new Float64Array(nb);
+      for(const i of ix){const b=B[i][j]; hg[b]+=g[i]; hh[b]+=h[i];}
+      let GL=0,HL=0;
+      for(let b=0;b<nb-1;b++){
+        GL+=hg[b]; HL+=hh[b]; const GR=G-GL, HR=H-HL;
+        if(HL<P.minChild||HR<P.minChild)continue;
+        const gain=0.5*(GL*GL/(HL+P.lambda)+GR*GR/(HR+P.lambda)-parent)-P.gamma;
+        if(gain>best.gain) best={gain,f:j,b};
+      }
+    }
+    if(best.f<0){ nodes[id]=leaf(G,H); return id; }
+    imp[best.f]+=best.gain;
+    const L=[],R=[]; for(const i of ix)(B[i][best.f]<=best.b?L:R).push(i);
+    const node={f:best.f,t:cuts[best.f][best.b],l:0,r:0}; nodes[id]=node;
+    node.l=build(L,depth+1); node.r=build(R,depth+1);
+    return id;
+  }
+  build(idx,0);
+  return nodes;
+}
+function xgbPredTree(nodes,z){ let k=0; while(nodes[k].f!==undefined){const n=nodes[k]; k= z[n.f]<=n.t? n.l : n.r;} return nodes[k].v; }
+
+/* ---- CatBoost: oblivious tree — one (feature, border) per level, shared by all leaves ---- */
+function catBuildTree(B,g,h,idx,cuts,feats,P,imp,rng,noiseScale){
+  const leafOf=new Int32Array(B.length);
+  const splits=[];
+  for(let d=0;d<P.depth;d++){
+    const nl=1<<d;
+    const GT=new Float64Array(nl), HT=new Float64Array(nl);
+    for(const i of idx){GT[leafOf[i]]+=g[i]; HT[leafOf[i]]+=h[i];}
+    let parent=0; for(let l=0;l<nl;l++) parent+=GT[l]*GT[l]/(HT[l]+P.lambda);
+    let best={score:-Infinity,gain:0,f:-1,b:-1};
+    for(const j of feats){
+      const nb=cuts[j].length+1; if(nb<2)continue;
+      const hg=new Float64Array(nl*nb), hh=new Float64Array(nl*nb);
+      for(const i of idx){const k=leafOf[i]*nb+B[i][j]; hg[k]+=g[i]; hh[k]+=h[i];}
+      const GL=new Float64Array(nl), HL=new Float64Array(nl);
+      for(let b=0;b<nb-1;b++){
+        let s=0, hl=0, hr=0;
+        for(let l=0;l<nl;l++){
+          GL[l]+=hg[l*nb+b]; HL[l]+=hh[l*nb+b];
+          const GR=GT[l]-GL[l], HR=HT[l]-HL[l];
+          s+=GL[l]*GL[l]/(HL[l]+P.lambda)+GR*GR/(HR+P.lambda);
+          hl+=HL[l]; hr+=HR;
+        }
+        if(hl<P.minChild||hr<P.minChild)continue;
+        const gain=s-parent;
+        const score=gain+(noiseScale>0?noiseScale*gbmGauss(rng):0);   // random strength
+        if(score>best.score) best={score,gain,f:j,b};
+      }
+    }
+    if(best.f<0||best.gain<=1e-12) break;
+    imp[best.f]+=best.gain/2;
+    splits.push({f:best.f,t:cuts[best.f][best.b]});
+    for(const i of idx) leafOf[i]=leafOf[i]*2+(B[i][best.f]<=best.b?0:1);
+  }
+  const nl=1<<splits.length, G=new Float64Array(nl), H=new Float64Array(nl);
+  for(const i of idx){G[leafOf[i]]+=g[i]; H[leafOf[i]]+=h[i];}
+  const leaves=Array.from(G,(gs,l)=> H[l]>0 ? -gs/(H[l]+P.lambda)*P.eta : 0);
+  return {s:splits,v:leaves};
+}
+function catPredTree(t,z){ let k=0; for(const s of t.s) k=k*2+(z[s.f]<=s.t?0:1); return t.v[k]; }
+
+function gbmPredictZ(M,z){
+  let o=M.base||0;
+  if(M.kind==='xgb') for(const t of M.trees) o+=xgbPredTree(t,z);
+  else               for(const t of M.trees) o+=catPredTree(t,z);
+  return o;
+}
+function gbmImportanceHtml(m){
+  if(!m||!m.model||!m.model.importance) return '';
+  const imp=m.model.importance, tot=imp.reduce((a,b)=>a+b,0)||1;
+  const rows=m.feats.map((f,j)=>({f,p:imp[j]/tot*100})).sort((a,b)=>b.p-a.p);
+  return '<div style="margin-top:8px"><div class="small muted">Feature importance (total split gain)</div>'+
+    rows.map(r=>`<div class="metric"><span>${esc(r.f)}</span><b>${r.p.toFixed(1)} %</b></div>`).join('')+'</div>';
+}
+
+async function trainGBM(kind){
+  const pre=kind, msg=$(pre+'Msg'), btn=$(kind==='xgb'?'btnTrainXGB':'btnTrainCAT');
+  const name=kind==='xgb'?'XGBoost':'CatBoost';
+  const n=find($('trainComp').value);
+  if(!n||!n.data){alert('Attach data to this component first (tab 3).');return;}
+  const target=$('targetCol').value;
+  const feats=[...document.querySelectorAll('.featchk:checked')].map(c=>c.value);
+  if(!feats.length){alert('Select at least one feature.');return;}
+  if(feats.includes(target)){alert('Target cannot also be a feature.');return;}
+  n.selTarget=target; n.selFeats=feats;
+  ensureDatasets(n);
+  const {X,Y,dropped}=buildMergedMatrix(n,feats,target,n.trainOpts);
+  if(X.length<20){alert('Not enough clean numeric rows to train '+name+' ('+X.length+'). Need ≥ 20.');return;}
+
+  const num=(id,d)=>{const v=parseFloat($(id).value);return isFinite(v)?v:d;};
+  const P = kind==='xgb' ? {
+      nTrees:Math.round(num('xgbTrees',300)), eta:num('xgbEta',0.1), depth:Math.round(num('xgbDepth',6)),
+      minChild:num('xgbMinChild',3), lambda:num('xgbLambda',1), gamma:num('xgbGamma',0),
+      sub:num('xgbSub',0.8), col:num('xgbCol',1), bins:Math.round(num('xgbBins',64)), early:Math.round(num('xgbEarly',30)) }
+    : {
+      nTrees:Math.round(num('catTrees',500)), eta:num('catEta',0.05), depth:Math.round(num('catDepth',6)),
+      minChild:1, lambda:num('catLambda',3), rand:num('catRand',1),
+      sub:num('catSub',0.8), col:1, bins:Math.round(num('catBins',128)), early:Math.round(num('catEarly',50)) };
+  P.bins=Math.max(8,Math.min(255,P.bins));
+
+  // same seeded split + standardization as the other trainers (comparable metrics)
+  const rng=mulberry32(12345);
+  const idx=[...Array(X.length).keys()];
+  for(let i=idx.length-1;i>0;i--){const j=Math.floor(rng()*(i+1));[idx[i],idx[j]]=[idx[j],idx[i]];}
+  const valN=Math.max(1,Math.floor(X.length*(parseFloat($('valSplit').value)||0.2)));
+  const vSet=new Set(idx.slice(0,valN));
+  const Xtr=[],Ytr=[],Xva=[],Yva=[];
+  idx.forEach(i=>{ if(vSet.has(i)){Xva.push(X[i]);Yva.push(Y[i]);} else {Xtr.push(X[i]);Ytr.push(Y[i]);} });
+  const sx=standardize(Xtr), sy=stdVec(Ytr);
+  const Ztr=sx.Z, Ytrn=sy.Zy;
+  const Zva=Xva.map(r=>r.map((v,j)=>(v-sx.mean[j])/sx.std[j]));
+  const Yvan=Yva.map(v=>(v-sy.mean)/sy.std);
+
+  const nf=feats.length, Ntr=Ztr.length, Nva=Zva.length;
+  const cuts=gbmCuts(Ztr,P.bins);
+  const B=Ztr.map(r=>Uint8Array.from(r.map((v,j)=>gbmBinOf(v,cuts[j]))));
+  const base=0;                                   // mean of standardized y
+  const pTr=new Float64Array(Ntr).fill(base), pVa=new Float64Array(Nva).fill(base);
+  const g=new Float64Array(Ntr), h=new Float64Array(Ntr).fill(1);   // squared loss
+  const trees=[], imp=new Float64Array(nf), hist={train:[],val:[]};
+  const trng=mulberry32(777);
+  let bestVal=Infinity, bestIt=-1, since=0;
+
+  btn.disabled=true;
+  msg.innerHTML='<span class="muted">training '+name+'…</span>';
+  try{
+    for(let t=0;t<P.nTrees;t++){
+      for(let i=0;i<Ntr;i++) g[i]=pTr[i]-Ytrn[i];
+      let rows=[]; for(let i=0;i<Ntr;i++) if(P.sub>=1||trng()<P.sub) rows.push(i);
+      if(rows.length<4) rows=[...Array(Ntr).keys()];
+      let fs=[...Array(nf).keys()];
+      if(P.col<1){ fs=fs.filter(()=>trng()<P.col); if(!fs.length) fs=[Math.floor(trng()*nf)]; }
+
+      let tree, pf;
+      if(kind==='xgb'){ tree=xgbBuildTree(B,g,h,rows,cuts,fs,P,imp); pf=xgbPredTree; }
+      else{
+        let g2=0; for(const i of rows) g2+=g[i]*g[i];
+        const noise=P.rand*(g2/rows.length)*(1-t/P.nTrees);        // decays like CatBoost
+        tree=catBuildTree(B,g,h,rows,cuts,fs,P,imp,trng,noise); pf=catPredTree;
+      }
+      trees.push(tree);
+      let se=0; for(let i=0;i<Ntr;i++){ pTr[i]+=pf(tree,Ztr[i]); se+=(pTr[i]-Ytrn[i])**2; }
+      let sv=0; for(let i=0;i<Nva;i++){ pVa[i]+=pf(tree,Zva[i]); sv+=(pVa[i]-Yvan[i])**2; }
+      hist.train.push(se/Ntr); hist.val.push(Nva?sv/Nva:null);
+      if(Nva){ const v=sv/Nva; if(v<bestVal-1e-9){bestVal=v;bestIt=t;since=0;} else since++; }
+      if(P.early>0&&Nva&&since>=P.early) break;
+      if(t%10===0){
+        msg.innerHTML='<span class="muted">training '+name+'… tree '+(t+1)+'/'+P.nTrees+' · train MSE '+(se/Ntr).toFixed(4)+(Nva?' · val MSE '+(sv/Nva).toFixed(4):'')+'</span>';
+        drawLoss(hist);
+        await new Promise(r=>setTimeout(r,0));          // keep the page responsive
+      }
+    }
+  }catch(e){ msg.innerHTML='<span class="bad">✕ '+esc(e.message)+'</span>'; btn.disabled=false; return; }
+
+  let stoppedEarly=false;
+  if(P.early>0&&bestIt>=0&&bestIt<trees.length-1){ trees.length=bestIt+1; stoppedEarly=true; }
+
+  const M={kind, base, trees, params:P, importance:Array.from(imp), stoppedEarly};
+  const predVa=Zva.map(z=>gbmPredictZ(M,z)*sy.std+sy.mean);
+  const met=regMetrics(Yva,predVa);
+  const ranges=feats.map((f,j)=>{const col=X.map(r=>r[j]);return {min:Math.min(...col),max:Math.max(...col)};});
+
+  if(n.model&&n.model.model&&n.model.model.tfModel){ try{n.model.model.tfModel.dispose();}catch(e){} }
+  n.model={ type:kind, feats, target, sx, sy, model:M, ranges, metrics:met, hist, dropped, nTrain:Ntr, nVal:Nva };
+
+  msg.innerHTML=`<span class="ok">✓ ${name}: ${trees.length} tree(s) on ${Ntr} rows, validated on ${Nva} · R² ${met.r2.toFixed(3)}.</span>`+
+    (stoppedEarly?` <span class="muted">Early-stopped at best validation round ${bestIt+1}.</span>`:'')+
+    (dropped?` <span class="warn">${dropped} row(s) dropped (non-numeric/blank).</span>`:'');
+  btn.disabled=false;
+  drawLoss(hist); showMetrics(n.model);
+  renderDiagram(); renderNodeList(); refreshSelectors();
+}
+
+/* =========================================================================
+   PERSISTENT STORAGE  —  IndexedDB auto-save (replaces "everything lost on
+   refresh"). IndexedDB quota is typically hundreds of MB to several GB, so
+   thousands of rows per dataset fit easily. Live TensorFlow.js models can't
+   be serialized and are dropped (retrain after reload); XGBoost / CatBoost /
+   linear / 1-layer models are plain JSON and are kept.
+   ========================================================================= */
+const TwinStore=(function(){
+  const DB='solar_digital_twin_db', ST='kv'; let dbp=null;
+  function open(){
+    if(dbp) return dbp;
+    dbp=new Promise((res,rej)=>{
+      if(!window.indexedDB) return rej(new Error('IndexedDB not available in this browser'));
+      const r=indexedDB.open(DB,1);
+      r.onupgradeneeded=()=>r.result.createObjectStore(ST);
+      r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error);
+    });
+    return dbp;
+  }
+  function tx(mode,fn){ return open().then(db=>new Promise((res,rej)=>{
+    const t=db.transaction(ST,mode), st=t.objectStore(ST); const req=fn(st);
+    t.oncomplete=()=>res(req&&req.result); t.onerror=()=>rej(t.error); t.onabort=()=>rej(t.error||new Error('storage quota exceeded'));
+  })); }
+  return { put:(k,v)=>tx('readwrite',s=>s.put(v,k)), get:k=>tx('readonly',s=>s.get(k)), del:k=>tx('readwrite',s=>s.delete(k)) };
+})();
+
+function twinSerialize(){
+  const nodes=state.nodes.map(n=>{
+    const c=Object.assign({},n);
+    if(n.data&&n.data.id&&Array.isArray(n.datasets)&&n.datasets.includes(n.data)) c.data={__ref:n.data.id};
+    return c;
+  });
+  return JSON.stringify({v:2,nodes,wires:state.wires},(k,v)=>k==='tfModel'?undefined:v);
+}
+function twinRestore(s){
+  state=Object.assign({nodes:[],wires:[],sel:null,connectFrom:null,connectMode:false},s);
+  delete state.v;
+  state.connectMode=false; state.connectFrom=null; state.sel=null;
+  let mx=1; state.nodes.forEach(n=>{const num=+String(n.id).replace(/\D/g,''); if(num>=mx)mx=num+1;}); uid=mx;
+  state.nodes.forEach(n=>{
+    if(n.data&&n.data.__ref) n.data=(n.datasets||[]).find(d=>d.id===n.data.__ref)||(n.datasets||[]).at(-1)||null;
+    if(n.model&&n.model.model&&n.model.model.kind==='tfnn'){ n.model=null; n.lastPred=null; }   // NN weights not restorable
+  });
+}
+
+let twinDirty=false, twinTimer=null, twinRestoring=false;
+function markDirty(){ if(twinRestoring)return; twinDirty=true; clearTimeout(twinTimer); twinTimer=setTimeout(twinSave,1200); }
+async function twinSave(){
+  if(!twinDirty) return; twinDirty=false;
+  try{
+    const s=twinSerialize();
+    await TwinStore.put('state',s);
+    await TwinStore.put('ragDocs',JSON.stringify(ragDocs));
+    updateStorageBadge('saved');
+  }catch(e){
+    $('storeBadge').innerHTML='<span class="bad">✕ auto-save failed: '+esc(e.message||e)+' — use “Save config” as backup</span>';
+  }
+}
+async function updateStorageBadge(word){
+  const el=$('storeBadge'); if(!el)return;
+  const rows=state.nodes.reduce((s,n)=>s+(n.datasets||(n.data?[n.data]:[])).reduce((a,d)=>a+(d.rows?d.rows.length:0),0),0);
+  let q='';
+  try{ if(navigator.storage&&navigator.storage.estimate){ const e=await navigator.storage.estimate();
+    q=' · '+(e.usage/1048576).toFixed(1)+' MB used of ~'+(e.quota/1048576/1024).toFixed(1)+' GB'; } }catch(_){}
+  el.innerHTML='<span class="ok">💾 '+(word||'auto-save on')+'</span> · '+rows.toLocaleString()+' rows stored'+q;
+}
+async function twinClearSaved(){
+  if(!confirm('Delete everything saved in this browser (components, all datasets, trained models)? Download a config first if you need a backup.'))return;
+  try{ await TwinStore.del('state'); await TwinStore.del('ragDocs'); }catch(e){}
+  twinRestoring=true; location.reload();
+}
+
+/* auto-save hooks: wrap the existing global functions that change state */
+['renderDiagram','renameDataset','setParamVal','renameParam','delParam','addParam','bessAnalyse',
+ 'bessWriteParams','renderRagDocList','syncSelHint','updateTrainDsInfo'].forEach(name=>{
+  const f=window[name]; if(typeof f!=='function')return;
+  window[name]=function(){ const r=f.apply(this,arguments); markDirty(); return r; };
+});
+window.addEventListener('beforeunload',()=>{ if(twinDirty) twinSave(); });
+
+/* restore last session on load */
+(async()=>{
+  try{
+    if(navigator.storage&&navigator.storage.persist) navigator.storage.persist().catch(()=>{});
+    const s=await TwinStore.get('state');
+    if(s){
+      twinRestoring=true;
+      twinRestore(JSON.parse(s));
+      renderDiagram(); refreshSelectors(); renderNodeList();
+      twinRestoring=false;
+    }
+    const rd=await TwinStore.get('ragDocs');
+    if(rd){ twinRestoring=true; ragDocs=JSON.parse(rd); renderRagDocList(); twinRestoring=false; }
+    updateStorageBadge(s?'restored last session':'auto-save on');
+  }catch(e){
+    twinRestoring=false;
+    $('storeBadge').innerHTML='<span class="warn">⚠ browser storage unavailable ('+esc(e.message||e)+') — use “Save config”</span>';
+  }
 })();
 </script>
 
